@@ -6,12 +6,36 @@
 
 #include "avermedia_c985.h"
 #include "cqlcodec.h"
+#include "ti3101.h"
+#include "nuc100.h"
 
 #define DRV_NAME "avermedia_c985_poc"
 
 static int c985_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
-    return cqlcodec_init_device(pdev, id);
+    struct c985_poc *d;
+    int ret;
+
+    ret = cqlcodec_init_device(pdev, id);
+    if (ret)
+        return ret;
+
+    d = pci_get_drvdata(pdev);
+
+    ret = cqlcodec_fw_download(d, 1);
+    if (ret)
+        goto err_remove;
+
+    /* External chip init */
+    ti3101_hw_reset(d);
+    ti3101_probe(d);
+    ti3101_init(d);
+
+    return 0;
+
+    err_remove:
+    cqlcodec_remove_device(pdev);
+    return ret;
 }
 
 static void c985_pci_remove(struct pci_dev *pdev)

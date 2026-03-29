@@ -344,6 +344,7 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
 
     dev_info(&pdev->dev, "cqlcodec_init_device()\n");
 
+    /* --- QPHCI_Init equivalent: PCI setup --- */
     ret = pcim_enable_device(pdev);
     if (ret)
         return ret;
@@ -367,85 +368,48 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
 
     pci_set_drvdata(pdev, d);
 
+    /* --- Read chip version (decompile: CancelBuffer at 0x38) --- */
     d->chip_ver = readl(d->bar1 + REG_CHIP_VER);
     dev_info(&pdev->dev, "chip_ver=0x%08x\n", d->chip_ver);
 
+    /* --- CQLCodec_LoadDefaultSettings --- */
     cqlcodec_load_default_settings(d);
-    c985_dump_regs(d, "initial");
 
-    /* Firmware upload */
-    writel(0x00000000, d->bar1 + REG_CLK_POWER);
-
-    ret = upload_firmware_cpr(d, FW_VIDEO, "video", CARD_RAM_VIDEO_BASE);
-    if (ret) goto err_out;
-
-    ret = upload_firmware_cpr(d, FW_AUDIO, "audio", CARD_RAM_AUDIO_BASE);
-    if (ret) goto err_out;
-
-    /* PLL setup */
-    c985_wr(d, PLL4_REG, PLL4_VAL_10020);
-    c985_wr(d, PLL5_REG, PLL5_VAL_DEFAULT);
-    c985_wr(d, REG_CLK_POWER, 0x00000000);
-
-    /* ARM halt */
-    ret = arm_reset(d, 0);
-    if (ret) goto err_out;
-
-    /* Memory init */
-    ret = qphci_reinit(d);
-    if (ret) goto err_out;
-
+    /* --- CQLCodec_InitializeMemory --- */
     ret = codec_initialize_memory(d);
     if (ret) goto err_out;
 
+    /* --- QPHCI_InitArmLoop --- */
     ret = qphci_init_arm_loop(d);
     if (ret) goto err_out;
 
-    /* Switches */
-    cqlcodec_ao_switch(d, !d->ao_enable);
-    cqlcodec_vo_switch(d, !d->vo_enable);
+    /* --- CQLCodec_SetGPIODefaults --- */
     gpio_set_defaults(d);
 
-    /* QPSOS */
-    ret = qpsos_probe_and_init(d);
-    if (ret) goto err_out;
-
-    /* Boot ARM */
-    ret = arm_reset(d, 1);
-    if (ret) goto err_out;
-
-    msleep(1000);
-
-    /* Register ISR */
+    /* --- CQLCodec_RegisterISR --- */
     ret = cqlcodec_register_isr(d);
-    if (ret)
+    if (ret) {
         dev_warn(&pdev->dev, "ISR registration failed\n");
+        /* decompile tears down on failure, but we continue for now */
+    }
 
-    /* TI3101 init */
-    ti3101_hw_reset(d);
+    /* --- TODO: VIU config (offsets 0x30-0x48) --- */
+    /* --- TODO: AI config (offsets 0x4C-0x60) --- */
+    /* --- TODO: VOU config (offsets 0x64-0x70) --- */
+    /* --- TODO: AO config (offsets 0x74-0x8C) --- */
 
-    ret = ti3101_probe(d);
-    if (ret)
-        dev_warn(&pdev->dev, "TI3101 probe failed\n");
+    /* --- CQLCodec_AOSwitch --- */
+    cqlcodec_ao_switch(d, !d->ao_enable);
 
-    ret = ti3101_init(d);
-    if (ret)
-        dev_warn(&pdev->dev, "TI3101 init failed\n");
+    /* --- CQLCodec_VOSwitch --- */
+    cqlcodec_vo_switch(d, !d->vo_enable);
 
-    /* NUC100 timing */
-    nuc100_get_hdmi_timing(d);
-
-    /* Debug */
-    c985_dump_regs(d, "post-boot");
-    c985_dump_hdmi_presence(d);
-    c985_dump_hdmi_mailbox(d, "post-init");
-
-    dev_info(&pdev->dev, "ARM_RESET=0x%08x (0=running)\n",
-             readl(d->bar1 + REG_ARM_RESET));
 
     return 0;
 
     err_out:
+    if (d->irq_registered)
+        free_irq(d->pdev->irq, d);
     if (d->bar1)
         iounmap(d->bar1);
     err_region:
@@ -474,3 +438,61 @@ void cqlcodec_remove_device(struct pci_dev *pdev)
 
     pci_release_region(pdev, C985_BAR_MMIO);
 }
+
+int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
+{
+    int ret;
+
+    dev_info(&d->pdev->dev, "cqlcodec_fw_download(do_reset=%d)\n", do_reset);
+
+    /* --- If do_reset: halt ARM, reinit, reconfigure --- */
+    if (do_reset) {
+        ret = arm_reset(d, 0);
+        if (ret) return ret;
+
+        ret = qphci_reinit(d);
+        if (ret) return ret;
+
+        ret = codec_initialize_memory(d);
+        if (ret) return ret;
+
+        cqlcodec_ao_switch(d, !d->ao_enable);
+        cqlcodec_vo_switch(d, !d->vo_enable);
+        gpio_set_defaults(d);
+
+        msleep(1);
+    }
+
+    /* --- QPSOS init (sets base address based on FW version) --- */
+    ret = qpsos_probe_and_init(d);
+    if (ret) return ret;
+
+    /* --- PLL setup (for PCIe bus) --- */
+    if (d->chip_ver == 0x10020)
+        c985_wr(d, PLL4_REG, PLL4_VAL_10020);
+    else
+        c985_wr(d, PLL4_REG, 0x20236);
+
+    c985_wr(d, PLL5_REG, PLL5_VAL_DEFAULT);
+    c985_wr(d, 0x6CC, 0);  /* cleared before audio FW */
+
+    /* --- Upload video firmware --- */
+    ret = upload_firmware_cpr(d, FW_VIDEO, "video", CARD_RAM_VIDEO_BASE);
+    if (ret) return ret;
+
+    /* --- Upload audio firmware --- */
+    ret = upload_firmware_cpr(d, FW_AUDIO, "audio", CARD_RAM_AUDIO_BASE);
+    if (ret) return ret;
+
+    /* --- Boot ARM --- */
+    if (do_reset) {
+        msleep(250);
+        ret = arm_reset(d, 1);
+        if (ret) return ret;
+        msleep(1);
+    }
+
+    return 0;
+}
+
+
