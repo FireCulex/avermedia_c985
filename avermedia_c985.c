@@ -8,6 +8,7 @@
 #include "cqlcodec.h"
 #include "ti3101.h"
 #include "nuc100.h"
+#include "project.h"
 
 #define DRV_NAME "avermedia_c985_poc"
 
@@ -26,10 +27,9 @@ static int c985_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
     if (ret)
         goto err_remove;
 
-    /* External chip init */
-    ti3101_hw_reset(d);
-    ti3101_probe(d);
-    ti3101_init(d);
+    ret = project_c985_init(d);
+    if (ret)
+        goto err_remove;
 
     return 0;
 

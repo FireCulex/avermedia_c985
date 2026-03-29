@@ -39,6 +39,11 @@ struct c985_poc {
     u32             aud_controls;
     u32             ai_volume;
     u32             ao_volume;
+    u8 mcu_addr;           /* NUC100 I2C address (7-bit) */
+    u8 mcu_rst_gpio;
+    u8 aud_switch_gpio1;
+    u8 aud_switch_gpio2;
+
 };
 
 /* BAR indices */

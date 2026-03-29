@@ -6,22 +6,25 @@
 
 struct c985_poc;
 
-/* GPIO pin assignments */
-#define I2C_SCL_GPIO    0
-#define I2C_SDA_GPIO    2
-#define I2C_DELAY_US    5
+/* Bus 0: TI3101 */
+#define I2C_SCL_TI3101    0
+#define I2C_SDA_TI3101    2
 
-/* Primitives */
-void i2c_bb_start(struct c985_poc *d);
-void i2c_bb_stop(struct c985_poc *d);
-int  i2c_bb_write_byte(struct c985_poc *d, u8 byte);  /* returns 1=ACK, 0=NAK */
-u8   i2c_bb_read_byte(struct c985_poc *d, int ack);   /* ack=1 send ACK, 0=NAK */
+/* Bus 1: NUC100 */
+#define I2C_SCL_NUC100    14
+#define I2C_SDA_NUC100    15
 
-/* GPIO helpers (exposed for direct use if needed) */
-void i2c_bb_sda_low(struct c985_poc *d);
-void i2c_bb_sda_high(struct c985_poc *d);
-void i2c_bb_scl_low(struct c985_poc *d);
-void i2c_bb_scl_high(struct c985_poc *d);
-int  i2c_bb_sda_read(struct c985_poc *d);
+#define I2C_DELAY_US      5
+
+/* Core I2C functions */
+void i2c_start(struct c985_poc *d, int scl, int sda);
+void i2c_stop(struct c985_poc *d, int scl, int sda);
+int  i2c_write(struct c985_poc *d, int scl, int sda, u8 byte);
+u8   i2c_read(struct c985_poc *d, int scl, int sda, int ack);
+int  i2c_write_then_read(struct c985_poc *d, int scl, int sda, u8 addr7, u8 reg, u8 *buf, int len);
+
+/* GPIO helpers */
+void gpio_drive_low(struct c985_poc *d, int pin);
+void gpio_release(struct c985_poc *d, int pin);
 
 #endif

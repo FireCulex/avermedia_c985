@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-// nuc100.c — NUC100 HDMI timing readout via bit-bang I2C
+// nuc100.c — NUC100 MCU interface via bit-bang I2C
 
 #include <linux/types.h>
 #include <linux/delay.h>
@@ -9,48 +9,46 @@
 #include "i2c_bitbang.h"
 #include "nuc100.h"
 
-#define NUC100_ADDR  0x15
-
 static int nuc100_read_reg(struct c985_poc *d, u8 reg, u8 *val)
 {
-    u8 addr = NUC100_ADDR << 1;
+    u8 addr7 = NUC100_I2C_ADDR >> 1;
 
-    i2c_bb_start(d);
-    if (!i2c_bb_write_byte(d, addr | 0)) goto fail;
-    if (!i2c_bb_write_byte(d, reg))      goto fail;
+    i2c_start(d, I2C_SCL_NUC100, I2C_SDA_NUC100);
+    if (!i2c_write(d, I2C_SCL_NUC100, I2C_SDA_NUC100, (addr7 << 1) | 0)) goto fail;
+    if (!i2c_write(d, I2C_SCL_NUC100, I2C_SDA_NUC100, reg)) goto fail;
 
-    i2c_bb_start(d);
-    if (!i2c_bb_write_byte(d, addr | 1)) goto fail;
+    i2c_start(d, I2C_SCL_NUC100, I2C_SDA_NUC100);
+    if (!i2c_write(d, I2C_SCL_NUC100, I2C_SDA_NUC100, (addr7 << 1) | 1)) goto fail;
 
-    *val = i2c_bb_read_byte(d, 0);
-    i2c_bb_stop(d);
+    *val = i2c_read(d, I2C_SCL_NUC100, I2C_SDA_NUC100, 0);
+    i2c_stop(d, I2C_SCL_NUC100, I2C_SDA_NUC100);
     return 0;
 
     fail:
-    i2c_bb_stop(d);
+    i2c_stop(d, I2C_SCL_NUC100, I2C_SDA_NUC100);
     return -EIO;
 }
 
 static int nuc100_read_block(struct c985_poc *d, u8 reg, u8 *buf, int len)
 {
-    u8 addr = NUC100_ADDR << 1;
+    u8 addr7 = NUC100_I2C_ADDR >> 1;
     int i;
 
-    i2c_bb_start(d);
-    if (!i2c_bb_write_byte(d, addr | 0)) goto fail;
-    if (!i2c_bb_write_byte(d, reg))      goto fail;
+    i2c_start(d, I2C_SCL_NUC100, I2C_SDA_NUC100);
+    if (!i2c_write(d, I2C_SCL_NUC100, I2C_SDA_NUC100, (addr7 << 1) | 0)) goto fail;
+    if (!i2c_write(d, I2C_SCL_NUC100, I2C_SDA_NUC100, reg)) goto fail;
 
-    i2c_bb_start(d);
-    if (!i2c_bb_write_byte(d, addr | 1)) goto fail;
+    i2c_start(d, I2C_SCL_NUC100, I2C_SDA_NUC100);
+    if (!i2c_write(d, I2C_SCL_NUC100, I2C_SDA_NUC100, (addr7 << 1) | 1)) goto fail;
 
     for (i = 0; i < len; i++)
-        buf[i] = i2c_bb_read_byte(d, (i < len - 1) ? 1 : 0);
+        buf[i] = i2c_read(d, I2C_SCL_NUC100, I2C_SDA_NUC100, (i < len - 1) ? 1 : 0);
 
-    i2c_bb_stop(d);
+    i2c_stop(d, I2C_SCL_NUC100, I2C_SDA_NUC100);
     return 0;
 
     fail:
-    i2c_bb_stop(d);
+    i2c_stop(d, I2C_SCL_NUC100, I2C_SDA_NUC100);
     return -EIO;
 }
 
@@ -84,6 +82,49 @@ int nuc100_get_hdmi_timing(struct c985_poc *d)
     dev_info(&d->pdev->dev,
              "NUC100: %u x %u, total %u x %u, PCLK ~ %u\n",
              HActive, VActive, HTotal, VTotal, PCLK);
+
+    return 0;
+}
+
+int nuc100_check_device(struct c985_poc *d)
+{
+    u8 id[3], ver;
+    int ret;
+    u8 addr7 = NUC100_I2C_ADDR >> 1;
+
+    msleep(5);
+
+    ret = i2c_write_then_read(d, I2C_SCL_NUC100, I2C_SDA_NUC100, addr7, 0x0b, id, 3);
+    if (ret)
+        return ret;
+
+    if (id[0] == 0x39 && id[1] == 0x38 && id[2] == 0x35) {
+        dev_info(&d->pdev->dev, "NUC100: FW ID OK (0x%02x%02x%02x)\n",
+                 id[0], id[1], id[2]);
+
+        ret = i2c_write_then_read(d, I2C_SCL_NUC100, I2C_SDA_NUC100, addr7, 0x04, &ver, 1);
+        if (ret == 0)
+            dev_info(&d->pdev->dev, "NUC100: FW version 0x%02x\n", ver);
+
+        return 0;
+    }
+
+    dev_err(&d->pdev->dev, "NUC100: bad FW ID 0x%02x%02x%02x (want 0x393835)\n",
+            id[0], id[1], id[2]);
+    return -ENODEV;
+}
+
+int nuc100_init(struct c985_poc *d)
+{
+    int ret;
+
+    dev_info(&d->pdev->dev, "NUC100: init\n");
+
+    d->mcu_addr = NUC100_I2C_ADDR >> 1;
+
+    ret = nuc100_check_device(d);
+    if (ret)
+        dev_warn(&d->pdev->dev, "NUC100 check failed (might be in ISP mode)\n");
 
     return 0;
 }

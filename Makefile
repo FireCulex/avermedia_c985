@@ -14,6 +14,7 @@ $(MODULE_NAME)-objs := \
 	nuc100.o \
 	diag.o \
 	mailbox.o \
+	project.o \
 	qphci.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build

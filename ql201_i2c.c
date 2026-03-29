@@ -14,7 +14,7 @@
 #define REG_I2C_R0      0x050c
 #define REG_I2C_R1      0x0510
 
-#define I2C_TIMEOUT_US  500
+#define I2C_TIMEOUT_US  500000
 
 int ql201_i2c_write(struct c985_poc *d, u8 addr, const u8 *buf, int len)
 {
@@ -39,11 +39,13 @@ int ql201_i2c_write(struct c985_poc *d, u8 addr, const u8 *buf, int len)
 
     timeout = I2C_TIMEOUT_US;
     while (timeout--) {
-        if (!(readl(d->bar1 + REG_I2C_CTRL) & 0x80000000))
+        ctrl = readl(d->bar1 + REG_I2C_CTRL);
+        if (!(ctrl & 0x80000000))
             return 0;
         udelay(1);
     }
 
+    dev_err(&d->pdev->dev, "QL201 I2C: timeout addr=0x%02x ctrl=0x%08x\n", addr, ctrl);
     return -ETIMEDOUT;
 }
 
@@ -74,12 +76,14 @@ int ql201_i2c_write_read(struct c985_poc *d, u8 addr,
 
     timeout = I2C_TIMEOUT_US;
     while (timeout--) {
-        if (!(readl(d->bar1 + REG_I2C_CTRL) & 0x80000000))
-            break;
-        udelay(1);
+        ctrl = readl(d->bar1 + REG_I2C_CTRL);
+        if (!(ctrl & 0x80000000))
+            return 0; // Success, busy bit cleared
+        udelay(1); // Wait a microsecond before checking again
     }
-    if (timeout == 0)
-        return -ETIMEDOUT;
+
+    dev_err(&d->pdev->dev, "QL201 I2C: timeout addr=0x%02x ctrl=0x%08x\n", addr, ctrl);
+    return -ETIMEDOUT;
 
     if (rlen > 0) {
         r0 = readl(d->bar1 + REG_I2C_R0);
