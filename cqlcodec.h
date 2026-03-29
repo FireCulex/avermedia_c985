@@ -58,6 +58,9 @@ struct c985_poc;
 /* VO - Video Output */
 #define VO_ENABLE             0x00   /* disabled */
 
+#define REG_PCI_INT_STATUS  0x4030
+
+
 /* Public API */
 int  cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id);
 void cqlcodec_remove_device(struct pci_dev *pdev);

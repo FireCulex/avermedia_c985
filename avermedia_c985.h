@@ -3,6 +3,15 @@
 #define AVERMEDIA_C985_H
 
 #include <linux/pci.h>
+#include <linux/videodev2.h>
+#include <media/v4l2-device.h>
+#include <media/v4l2-dev.h>
+#include <media/videobuf2-v4l2.h>
+
+struct c985_buffer {
+    struct vb2_v4l2_buffer vb;
+    struct list_head list;
+};
 
 struct c985_poc {
     struct pci_dev *pdev;
@@ -44,6 +53,16 @@ struct c985_poc {
     u8 aud_switch_gpio1;
     u8 aud_switch_gpio2;
 
+    /* V4L2 */
+    struct v4l2_device v4l2_dev;
+    struct video_device vdev;
+    struct vb2_queue vb2_queue;
+    struct mutex v4l2_lock;
+    struct list_head buf_list;
+    spinlock_t buf_lock;
+    unsigned int width;
+    unsigned int height;
+    unsigned int sequence;
 };
 
 /* BAR indices */

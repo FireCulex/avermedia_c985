@@ -15,7 +15,10 @@ $(MODULE_NAME)-objs := \
 	diag.o \
 	mailbox.o \
 	project.o \
-	qphci.o
+	qphci.o \
+	qpfwapi.o \
+	qpfwencapi.o \
+	v4l2.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PWD  := $(shell pwd)

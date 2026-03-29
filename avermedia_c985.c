@@ -3,19 +3,28 @@
 
 #include <linux/module.h>
 #include <linux/pci.h>
+#include <linux/pci_ids.h>
+
 
 #include "avermedia_c985.h"
 #include "cqlcodec.h"
 #include "ti3101.h"
 #include "nuc100.h"
 #include "project.h"
+#include "v4l2.h"
 
 #define DRV_NAME "avermedia_c985_poc"
+#define DRV_DESC "AVerMedia Live Gamer HD Series (C985)"
+
+MODULE_DESCRIPTION(DRV_DESC);
 
 static int c985_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
     struct c985_poc *d;
     int ret;
+
+    /* Fix PCI class code for proper device identification */
+    pdev->class = PCI_CLASS_MULTIMEDIA_VIDEO << 8;
 
     ret = cqlcodec_init_device(pdev, id);
     if (ret)
@@ -31,6 +40,11 @@ static int c985_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
     if (ret)
         goto err_remove;
 
+    /* Register V4L2 */
+    ret = c985_v4l2_register(d);
+    if (ret)
+        goto err_remove;
+
     return 0;
 
     err_remove:
@@ -40,6 +54,11 @@ static int c985_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 static void c985_pci_remove(struct pci_dev *pdev)
 {
+    struct c985_poc *d = pci_get_drvdata(pdev);
+
+    if (d) {
+        c985_v4l2_unregister(d);
+    }
     cqlcodec_remove_device(pdev);
 }
 

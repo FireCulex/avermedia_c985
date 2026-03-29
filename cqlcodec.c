@@ -254,14 +254,89 @@ void cqlcodec_load_default_settings(struct c985_poc *d)
 static irqreturn_t cqlcodec_interrupt_handler(int irq, void *dev_id)
 {
     struct c985_poc *d = dev_id;
-    u32 status;
+    u32 pci_status, hci_status, msg_status, msg_data;
 
-    status = readl(d->bar1 + REG_ARM_CTRL);
-    dev_dbg(&d->pdev->dev, "IRQ: status=0x%08x\n", status);
+    pci_status = readl(d->bar1 + REG_PCI_INT_STATUS);
+    if (!(pci_status & 0x40000000))
+        return IRQ_NONE;
+
+    /* Clear PCI interrupt immediately */
+    writel(0x40000000, d->bar1 + REG_PCI_INT_STATUS);
+
+    hci_status = readl(d->bar1 + 0x800);
+
+    /* ARM message interrupt */
+    if (hci_status & BIT(16)) {
+        msg_status = readl(d->bar1 + 0x6C8);
+        msg_data = readl(d->bar1 + 0x6CC);
+
+        u8 cmd = msg_status & 0xFF;
+        u16 task = (msg_status >> 16) & 0xFFFF;
+
+        dev_info(&d->pdev->dev,
+                 "IRQ: ARM msg cmd=0x%02x task=%u status=0x%08x data=0x%08x\n",
+                 cmd, task, msg_status, msg_data);
+
+        switch (cmd) {
+            case 0x40:
+                /* Video frame ready notification */
+                dev_info(&d->pdev->dev, "IRQ: VIDEO FRAME READY!\n");
+                /* Read frame info from registers */
+                {
+                    u32 frame_addr = readl(d->bar1 + 0x6F4);
+                    u32 frame_size = readl(d->bar1 + 0x6F0);
+                    u32 frame_info = readl(d->bar1 + 0x6F8);
+                    dev_info(&d->pdev->dev,
+                             "  addr=0x%08x size=%u info=0x%08x\n",
+                             frame_addr, frame_size, frame_info);
+                }
+                /* TODO: DMA the frame data to a vb2 buffer */
+                break;
+
+            case 0x41:
+                /* Audio frame ready notification */
+                dev_info(&d->pdev->dev, "IRQ: AUDIO FRAME READY!\n");
+                break;
+
+            case 0x01:
+                /* Encoder started ACK */
+                dev_info(&d->pdev->dev, "IRQ: Encoder started ACK\n");
+                break;
+
+            case 0x02:
+                /* Encoder stopped ACK */
+                dev_info(&d->pdev->dev, "IRQ: Encoder stopped ACK\n");
+                break;
+
+            case 0x06:
+                /* Config updated ACK */
+                dev_info(&d->pdev->dev, "IRQ: Config updated ACK\n");
+                break;
+
+            default:
+                dev_info(&d->pdev->dev, "IRQ: Unknown ARM cmd 0x%02x\n", cmd);
+                break;
+        }
+
+        /* Clear the message - ARM is waiting for us to ACK */
+        writel(0, d->bar1 + 0x6C8);
+
+        /* Clear HCI interrupt bit */
+        writel(BIT(16), d->bar1 + 0x800);
+    }
+
+    if (hci_status & BIT(17)) {
+        dev_info(&d->pdev->dev, "IRQ: DMA read complete\n");
+        writel(BIT(17), d->bar1 + 0x800);
+    }
+
+    if (hci_status & BIT(18)) {
+        dev_info(&d->pdev->dev, "IRQ: DMA write complete\n");
+        writel(BIT(18), d->bar1 + 0x800);
+    }
 
     return IRQ_HANDLED;
 }
-
 /* -----------------------------------------------------------------------
  * Register ISR
  * --------------------------------------------------------------------- */
@@ -349,6 +424,9 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
     if (ret)
         return ret;
 
+    pci_set_master(pdev);  /* Enable bus mastering for DMA and interrupts */
+
+
     ret = pci_request_region(pdev, C985_BAR_MMIO, DRV_NAME);
     if (ret)
         return ret;
@@ -393,6 +471,11 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
         /* decompile tears down on failure, but we continue for now */
     }
 
+    {
+        u32 status = readl(d->bar1 + REG_PCI_INT_STATUS);
+        writel(status | 0x70000, d->bar1 + REG_PCI_INT_STATUS);
+        dev_info(&pdev->dev, "cleared pending IRQ status=0x%08x\n", status);
+    }
     /* --- TODO: VIU config (offsets 0x30-0x48) --- */
     /* --- TODO: AI config (offsets 0x4C-0x60) --- */
     /* --- TODO: VOU config (offsets 0x64-0x70) --- */
@@ -404,6 +487,8 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
     /* --- CQLCodec_VOSwitch --- */
     cqlcodec_vo_switch(d, !d->vo_enable);
 
+    /* Enable card interrupts */
+    writel(readl(d->bar1 + 0x4000) | 1, d->bar1 + 0x4000);
 
     return 0;
 
@@ -484,12 +569,17 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
     ret = upload_firmware_cpr(d, FW_AUDIO, "audio", CARD_RAM_AUDIO_BASE);
     if (ret) return ret;
 
-    /* --- Boot ARM --- */
+    /* Boot ARM */
     if (do_reset) {
         msleep(250);
         ret = arm_reset(d, 1);
         if (ret) return ret;
-        msleep(1);
+        msleep(1000);
+
+        dev_info(&d->pdev->dev, "post-boot: 0x80C=0x%08x ARM_RESET=0x%08x ARM_BOOT=0x%08x\n",
+                 readl(d->bar1 + 0x80C),
+                 readl(d->bar1 + REG_ARM_RESET),
+                 readl(d->bar1 + REG_ARM_BOOT));
     }
 
     return 0;

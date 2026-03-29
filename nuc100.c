@@ -9,7 +9,8 @@
 #include "i2c_bitbang.h"
 #include "nuc100.h"
 
-static int nuc100_read_reg(struct c985_poc *d, u8 reg, u8 *val)
+
+int nuc100_read_reg(struct c985_poc *d, u8 reg, u8 *val)
 {
     u8 addr7 = NUC100_I2C_ADDR >> 1;
 
@@ -52,39 +53,114 @@ static int nuc100_read_block(struct c985_poc *d, u8 reg, u8 *buf, int len)
     return -EIO;
 }
 
-int nuc100_get_hdmi_timing(struct c985_poc *d)
+int nuc100_get_hdmi_timing(struct c985_poc *d,
+                           struct nuc100_hdmi_timing *t,
+                           int *valid)
 {
-    u8 buf[7], busy;
+    u8 addr7 = NUC100_I2C_ADDR >> 1;
+    u8 buf[7];
+    u8 busy, pol;
     int retries = 0;
-    u16 HTotal, HActive, VTotal, VActive;
-    u32 PCLK;
+    int ret;
+
+    if (valid)
+        *valid = 0;
+
+    /* Step 1: wait for NUC100 timing ready (reg 0x1B == 0) */
+    msleep(5);
 
     do {
-        if (nuc100_read_reg(d, 0x1b, &busy) < 0)
-            return -EIO;
+        ret = i2c_write_then_read(d,
+                                  I2C_SCL_NUC100,
+                                  I2C_SDA_NUC100,
+                                  addr7,
+                                  0x1b,
+                                  &busy,
+                                  1);
+        if (ret < 0)
+            return ret;
+
         if (busy == 0)
             break;
+
         msleep(30);
     } while (++retries < 10);
 
     if (busy != 0)
         return -EIO;
 
-    if (nuc100_read_block(d, 0x1d, buf, 7) < 0)
-        return -EIO;
+    /* Step 2: read 7 timing bytes from reg 0x1D */
+    msleep(5);
 
-    HTotal  =  buf[0] | ((buf[1] & 0x0f) << 8);
-    HActive = ((buf[1] & 0xf0) << 4) | buf[2];
-    VTotal  =  buf[3] | ((buf[4] & 0x0f) << 8);
-    VActive = ((buf[4] & 0xf0) << 4) | buf[5];
-    PCLK    = buf[6] ? (0x34bc00u / buf[6]) : 0;
+    ret = i2c_write_then_read(d,
+                              I2C_SCL_NUC100,
+                              I2C_SDA_NUC100,
+                              addr7,
+                              0x1d,
+                              buf,
+                              7);
+    if (ret < 0)
+        return ret;
 
-    dev_info(&d->pdev->dev,
-             "NUC100: %u x %u, total %u x %u, PCLK ~ %u\n",
-             HActive, VActive, HTotal, VTotal, PCLK);
+    /* Decode timing (matches Windows bit‑packing) */
+    u16 htotal  = (buf[1] & 0x0F) << 8 | buf[0];
+    u16 hactive = (buf[1] & 0xF0) << 4 | buf[2];
+    u16 vtotal  = (buf[4] & 0x0F) << 8 | buf[3];
+    u16 vactive = (buf[4] & 0xF0) << 4 | buf[5];
+
+    /* Pixel clock: 0x34BC00 / PixelCNT */
+    u8 pixelcnt = buf[6];
+    u32 pclk = 0;
+
+    if (pixelcnt != 0)
+        pclk = 0x34BC00 / pixelcnt;
+
+    /* Basic sanity check */
+    if (htotal == 0 || hactive == 0 ||
+        vtotal == 0 || vactive == 0) {
+        if (valid)
+            *valid = 0;
+        return 0;
+        }
+
+        /* Step 3: read sync polarity from reg 0x26 */
+        ret = i2c_write_then_read(d,
+                                  I2C_SCL_NUC100,
+                                  I2C_SDA_NUC100,
+                                  addr7,
+                                  0x26,
+                                  &pol,
+                                  1);
+        if (ret < 0)
+            return ret;
+
+    u8 hpol = 0;
+    u8 vpol = 0;
+
+    switch (pol | 0xFC) {
+        case 0xFD: hpol = 0; vpol = 1; break;
+        case 0xFE: hpol = 1; vpol = 0; break;
+        case 0xFF: hpol = 1; vpol = 1; break;
+        default:   hpol = 0; vpol = 0; break;
+    }
+
+    /* Fill output struct */
+    if (t) {
+        t->hactive    = hactive;
+        t->vactive    = vactive;
+        t->htotal     = htotal;
+        t->vtotal     = vtotal;
+        t->pixelclock = pclk;
+        t->hpol       = hpol;
+        t->vpol       = vpol;
+    }
+
+    if (valid)
+        *valid = 1;
 
     return 0;
 }
+
 
 int nuc100_check_device(struct c985_poc *d)
 {
@@ -128,3 +204,40 @@ int nuc100_init(struct c985_poc *d)
 
     return 0;
 }
+
+int nuc100_get_hdmi_status(struct c985_poc *d)
+{
+    u8 busy, status;
+    int retries = 0;
+    u8 addr7 = NUC100_I2C_ADDR >> 1;
+
+    msleep(5);
+
+    /* Wait for NUC100 to be ready (register 0x1B == 0) */
+    do {
+        if (i2c_write_then_read(d, I2C_SCL_NUC100, I2C_SDA_NUC100, addr7, 0x1b, &busy, 1) < 0)
+            return -EIO;
+        if (busy == 0)
+            break;
+        msleep(30);
+    } while (++retries < 10);
+
+    if (busy != 0)
+        return -EIO;
+
+    msleep(5);
+
+    /* Read status register 0x1C */
+    if (i2c_write_then_read(d, I2C_SCL_NUC100, I2C_SDA_NUC100, addr7, 0x1c, &status, 1) < 0)
+        return -EIO;
+
+    /* Bit 2 = signal present */
+    if (status & 0x04) {
+        dev_info(&d->pdev->dev, "HDMI: signal detected (status=0x%02x)\n", status);
+        return 1;
+    }
+
+    dev_info(&d->pdev->dev, "HDMI: no signal (status=0x%02x)\n", status);
+    return 0;
+}
+

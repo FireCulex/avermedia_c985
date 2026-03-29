@@ -46,5 +46,20 @@ int project_c985_init(struct c985_poc *d)
         return ret;
     }
 
+    struct nuc100_hdmi_timing t;
+    int valid = 0;
+
+    ret = nuc100_get_hdmi_timing(d, &t, &valid);
+    if (ret == 0 && valid) {
+        dev_info(&d->pdev->dev,
+                 "HDMI timing: %ux%u total=%ux%u pclk=%u Hz HPol=%u VPol=%u\n",
+                 t.hactive, t.vactive,
+                 t.htotal, t.vtotal,
+                 t.pixelclock,
+                 t.hpol, t.vpol);
+    } else {
+        dev_warn(&d->pdev->dev, "HDMI timing invalid or unreadable\n");
+    }
+
     return 0;
 }
