@@ -244,21 +244,20 @@ int qpfwencapi_stop(struct c985_poc *d)
  * Write encoder config to register block
  * --------------------------------------------------------------------- */
 
-static void write_encoder_config(struct c985_poc *d,
-                                 struct hdmi_video_info *vinfo)
+static void write_encoder_config(struct c985_poc *d, struct hdmi_video_info *vinfo)
 {
-    writel(0x2101b219, d->bar1 + 0x6C4);
-    writel(((u32)d->height << 16) | d->width, d->bar1 + 0x6C8);
-    writel(vinfo->qp_inctrl, d->bar1 + 0x6CC);
-    writel(0x520800f2, d->bar1 + 0x6D0);
-    writel(0x21121080, d->bar1 + 0x6D4);
-    writel(0x00000010, d->bar1 + 0x6D8);
-    writel(((u32)d->height << 16) | d->width, d->bar1 + 0x6DC);
-    writel(0xf199003c, d->bar1 + 0x6E0);
-    writel(0x80002000, d->bar1 + 0x6E4);
-    writel(0x1f4007d0, d->bar1 + 0x6E8);
-    writel(0x005003e8, d->bar1 + 0x6EC);
-    writel(0x00000000, d->bar1 + 0x6F0);
+    // Write encoder configuration using the correct register offsets
+    writel(0x2101b219, d->bar1 + d->enc_reg_system_control);
+    writel(((u32)d->height << 16) | d->width, d->bar1 + d->enc_reg_picture_resolution);
+    writel(vinfo->qp_inctrl, d->bar1 + d->enc_reg_input_control);
+    writel(0x520800f2, d->bar1 + d->enc_reg_audio_control_ex);
+    writel(0x21121080, d->bar1 + d->enc_reg_audio_control_param);
+    writel(0x00000010, d->bar1 + d->enc_reg_block_size);
+    writel(((u32)d->height << 16) | d->width, d->bar1 + d->enc_reg_out_pic_resolution);
+    writel(0xf199003c, d->bar1 + d->enc_reg_gop_loop_filter);
+    writel(0x80002000, d->bar1 + d->enc_reg_filter_control);
+    writel(0x1f4007d0, d->bar1 + d->enc_reg_bit_rate);
+    writel(0x005003e8, d->bar1 + d->enc_reg_rate_control);
 
     dev_info(&d->pdev->dev, "ENC: config written to register block\n");
 }
