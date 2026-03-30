@@ -8,6 +8,10 @@
 #include <media/v4l2-dev.h>
 #include <media/videobuf2-v4l2.h>
 
+#include <linux/kfifo.h>
+#include <linux/workqueue.h>
+
+
 struct c985_buffer {
     struct vb2_v4l2_buffer vb;
     struct list_head list;
@@ -63,7 +67,29 @@ struct c985_poc {
     unsigned int width;
     unsigned int height;
     unsigned int sequence;
+    u32 buf_count;
+    u32 buf_size;
+
+    DECLARE_KFIFO_PTR(frame_fifo, u8);
+    spinlock_t frame_lock;
+    struct list_head pending_frames;
+    struct work_struct frame_work;
+    u32 frame_sequence;
+    bool encoder_running;
+
+    /* Add to struct c985_poc: */
+
+    /* DMA state */
+    spinlock_t dma_lock;
+    struct completion dma_done;
+    bool dma_active;
+    dma_addr_t current_dma_addr;
+    u32 current_dma_len;
+
+
+
 };
+
 
 /* BAR indices */
 #define C985_BAR_MMIO       1

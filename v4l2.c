@@ -27,18 +27,33 @@ static int c985_queue_setup(struct vb2_queue *vq,
                             unsigned int *nbuffers, unsigned int *nplanes,
                             unsigned int sizes[], struct device *alloc_devs[])
 {
+    struct c985_poc *d = vb2_get_drv_priv(vq);
     unsigned int size = 512 * 1024;  /* 512KB max per H.264 frame */
 
-    if (*nplanes)
-        return sizes[0] < size ? -EINVAL : 0;
+    dev_dbg(&d->pdev->dev, "queue_setup: nbuffers=%u nplanes=%u\n",
+            *nbuffers, *nplanes);
 
+    if (*nplanes) {
+        /* Called with already allocated buffers */
+        if (sizes[0] < size)
+            return -EINVAL;
+        return 0;
+    }
+
+    /* First call - set up buffer requirements */
     *nplanes = 1;
     sizes[0] = size;
-    *nbuffers = min(*nbuffers, 8u);
+
+    if (*nbuffers < 2)
+        *nbuffers = 2;
+    if (*nbuffers > 32)
+        *nbuffers = 32;
+
+    dev_info(&d->pdev->dev, "queue_setup: %u buffers of %u bytes\n",
+             *nbuffers, sizes[0]);
 
     return 0;
 }
-
 static int c985_buf_prepare(struct vb2_buffer *vb)
 {
     unsigned int size = 512 * 1024;
@@ -116,7 +131,6 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
     }
 
     /* In c985_start_streaming, add this debug */
-    u8 buf2[64];
     int i;
 
 

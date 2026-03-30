@@ -13,6 +13,9 @@
 #include "cpr.h"
 #include "qphci.h"
 
+#include "encoder.h"
+
+#include "pciecntl.h"
 #define DRV_NAME "avermedia_c985_poc"
 
 /* -----------------------------------------------------------------------
@@ -378,115 +381,57 @@ static irqreturn_t cqlcodec_interrupt_handler(int irq, void *dev_id)
     pci_status = readl(d->bar1 + 0x4030);
     hci_status = readl(d->bar1 + 0x804);
 
-    /* Not our interrupt */
-    if (!(pci_status & 0x40010000) && !(hci_status & 0x70000))
+    /* Not our interrupt if nothing set */
+    if (!pci_status && !hci_status)
         return IRQ_NONE;
 
-    if (printk_ratelimit())
+    /* Clear PCI status IMMEDIATELY by writing back same value */
+    if (pci_status) {
+        writel(pci_status, d->bar1 + 0x4030);
+        handled = 1;
+    }
+
+    /* Clear HCI status */
+    if (hci_status) {
+        writel(hci_status, d->bar1 + 0x804);
+        handled = 1;
+    }
+
+    /* Only log occasionally to avoid spam */
+    if (printk_ratelimit() && (hci_status & 0x70000))
         dev_info(&d->pdev->dev,
                  "IRQ: pci=0x%08x hci=0x%08x\n",
                  pci_status, hci_status);
 
-        /*
-         * ----------------------------------------------------
-         * HCI message interrupt (bit 16)
-         * ----------------------------------------------------
-         */
+        /* Process HCI message interrupt (bit 16) */
         if (hci_status & BIT(16)) {
-
             u32 msg_status = readl(d->bar1 + 0x6C8);
-            u32 msg_data   = readl(d->bar1 + 0x6CC);
 
             if (msg_status) {
-
-                u8  cmd  = msg_status & 0xFF;
-                u16 task = (msg_status >> 16) & 0xFFFF;
+                u8 cmd = msg_status & 0xFF;
+                u32 p1 = readl(d->bar1 + 0x6B4);
+                u32 p2 = readl(d->bar1 + 0x6B8);
+                u32 p3 = readl(d->bar1 + 0x6BC);
+                u32 p4 = readl(d->bar1 + 0x6C0);
+                u32 p5 = readl(d->bar1 + 0x6C4);
 
                 dev_info(&d->pdev->dev,
-                         "IRQ: cmd=0x%02x task=%u st=0x%08x dat=0x%08x\n",
-                         cmd, task, msg_status, msg_data);
+                         "IRQ: cmd=0x%02x p1=0x%08x p2=0x%08x\n",
+                         cmd, p1, p2);
 
-                switch (cmd) {
-                    case 0x01:
-                        dev_info(&d->pdev->dev, "IRQ: Encoder STARTED\n");
-                        break;
-                    case 0x02:
-                        dev_info(&d->pdev->dev, "IRQ: Encoder STOPPED\n");
-                        break;
-                    case 0x06:
-                        dev_info(&d->pdev->dev, "IRQ: Config updated\n");
-                        break;
-                    case 0x10:
-                        dev_info(&d->pdev->dev, "IRQ: VIU ack\n");
-                        break;
-                    case 0x40:
-                        dev_info(&d->pdev->dev,
-                                 "IRQ: VIDEO FRAME seq=%u\n",
-                                 d->sequence++);
-                        break;
-                    case 0x41:
-                        dev_info(&d->pdev->dev, "IRQ: AUDIO FRAME\n");
-                        break;
-                    case 0x80:
-                        dev_info(&d->pdev->dev,
-                                 "IRQ: ERROR 0x%08x\n",
-                                 msg_data);
-                        break;
-                    case 0xF1:
-                        dev_info(&d->pdev->dev, "IRQ: SystemOpen ack\n");
-                        break;
-                    case 0xF2:
-                        dev_info(&d->pdev->dev, "IRQ: SystemLink ack\n");
-                        break;
-                    default:
-                        dev_info(&d->pdev->dev,
-                                 "IRQ: Unknown cmd=0x%02x\n",
-                                 cmd);
-                        break;
-                }
+                if (cmd == 0x40)
+                    encoder_parse_arm_message(d, cmd, p1, p2, p3, p4, p5);
 
                 /* ACK ARM message */
                 writel(0, d->bar1 + 0x6C8);
             }
-
-            /* Clear HCI interrupt bit */
-            writel(BIT(16), d->bar1 + 0x804);
-
-            handled = 1;
         }
 
-        /*
-         * ----------------------------------------------------
-         * DMA read done (bit 17)
-         * ----------------------------------------------------
-         */
-        if (hci_status & BIT(17)) {
-            dev_info(&d->pdev->dev, "IRQ: DMA read done\n");
-            writel(BIT(17), d->bar1 + 0x804);
-            handled = 1;
-        }
-
-        /*
-         * ----------------------------------------------------
-         * DMA write done (bit 18)
-         * ----------------------------------------------------
-         */
-        if (hci_status & BIT(18)) {
-            dev_info(&d->pdev->dev, "IRQ: DMA write done\n");
-            writel(BIT(18), d->bar1 + 0x804);
-            handled = 1;
-        }
-
-        /*
-         * ----------------------------------------------------
-         * Now clear PCI interrupt status LAST
-         * ----------------------------------------------------
-         */
-        if (pci_status & 0x10000)
-            writel(0x10000, d->bar1 + 0x4030);
-
-    if (pci_status & 0x40000000)
-        writel(0x40000000, d->bar1 + 0x4030);
+        /* DMA interrupts */
+        if (hci_status & BIT(17))
+            pciecntl_dma_read_done(d);
+    if (hci_status & BIT(18))
+        pciecntl_dma_write_done(d);
 
     return handled ? IRQ_HANDLED : IRQ_NONE;
 }
@@ -539,6 +484,25 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
 
     pci_set_master(pdev);
 
+    /* Check if device needs reset (stuck from previous load) */
+    {
+        void __iomem *bar_test = pci_ioremap_bar(pdev, C985_BAR_MMIO);
+        if (bar_test) {
+            u32 status = readl(bar_test + 0x4030);
+            if (status == 0x7fffffff || status == 0xffffffff) {
+                dev_warn(&pdev->dev, "Device stuck (0x4030=0x%08x), forcing PCI reset\n", status);
+                iounmap(bar_test);
+                pci_reset_function(pdev);
+                msleep(100);
+                /* Re-enable after reset */
+                pcim_enable_device(pdev);
+                pci_set_master(pdev);
+            } else {
+                iounmap(bar_test);
+            }
+        }
+    }
+
     ret = pci_request_region(pdev, C985_BAR_MMIO, DRV_NAME);
     if (ret)
         return ret;
@@ -588,10 +552,23 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
     cqlcodec_ao_switch(d, !d->ao_enable);
     cqlcodec_vo_switch(d, !d->vo_enable);
 
+    /* Enable PCI interrupts */
     c985_wr(d, 0x4000, c985_rd(d, 0x4000) | 1);
 
-    dump_full_state(d, "AFTER-INIT");
-    return 0;
+    /* Enable HCI interrupts: message(16), DMA read(17), DMA write(18) */
+    c985_wr(d, 0x800, 0x00070000);
+
+    /* Clear any pending HCI status */
+    c985_wr(d, 0x804, 0x00070000);
+
+    /* Debug: verify interrupt setup */
+    dev_info(&pdev->dev, "INT setup: 0x4000=0x%08x 0x4030=0x%08x 0x800=0x%08x 0x804=0x%08x\n",
+             readl(d->bar1 + 0x4000),
+             readl(d->bar1 + 0x4030),
+             readl(d->bar1 + 0x800),
+             readl(d->bar1 + 0x804));
+
+    return 0;  // ← ADD THIS!
 
     err_out:
     if (d->irq_registered)
@@ -609,8 +586,9 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
 void cqlcodec_remove_device(struct pci_dev *pdev)
 {
     struct c985_poc *d = pci_get_drvdata(pdev);
-    u32 val, reg0, arm_reset_val;
+    u32 val, reg0;
     unsigned long timeout;
+    u16 pci_cmd;
 
     dev_info(&pdev->dev, "cqlcodec_remove_device()\n");
 
@@ -618,17 +596,22 @@ void cqlcodec_remove_device(struct pci_dev *pdev)
         return;
 
     if (d->bar1) {
-        /* 1. Disable interrupts first */
+        /* 1. Disable interrupts at PCI level first */
+        pci_read_config_word(pdev, PCI_COMMAND, &pci_cmd);
+        pci_write_config_word(pdev, PCI_COMMAND, pci_cmd & ~PCI_COMMAND_INTX_DISABLE);
+
+        /* Clear and disable all device interrupts */
         val = readl(d->bar1 + 0x4000);
-        writel(val & ~1, d->bar1 + 0x4000);
-        writel(0x7FFFFFFF, d->bar1 + 0x4030);
-        writel(0x00070000, d->bar1 + 0x804);
+        writel(0, d->bar1 + 0x4000);  /* Disable all */
+        writel(0xFFFFFFFF, d->bar1 + 0x4030);  /* Try to clear all status */
+        writel(0xFFFFFFFF, d->bar1 + 0x804);   /* Clear HCI status */
     }
 
     if (d->irq_registered) {
         free_irq(d->pdev->irq, d);
         d->irq_registered = 0;
     }
+
 
     if (d->bar1) {
         /* 2. CQLCodec_PowerDown sequence */
@@ -685,12 +668,19 @@ void cqlcodec_remove_device(struct pci_dev *pdev)
         }
         writel(0x00000000, d->bar1 + 0x10);
 
+        /* 5. Final interrupt status clear before unmap */
+        writel(0x7FFFFFFF, d->bar1 + 0x4030);
+        writel(0x00070000, d->bar1 + 0x804);
+
         dev_info(&pdev->dev, "hardware shutdown complete\n");
         iounmap(d->bar1);
         d->bar1 = NULL;
     }
 
     pci_release_region(pdev, C985_BAR_MMIO);
+
+    /* Force PCI device reset so next load starts clean */
+    pci_reset_function(pdev);
 }
 /* -----------------------------------------------------------------------
  * Firmware download — CORRECTED
@@ -765,6 +755,17 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
         /* Restore DDR controller to power-on default BEFORE memory init */
         dev_info(&d->pdev->dev, "DDR 0xf1c = 0x00000f00 (power-on default)\n");
         c985_wr(d, 0x0f1c, 0x00000f00);
+
+        /* ADD: Force DDR controller full reset sequence */
+        c985_wr(d, 0x0f14, 0x00020007);  /* Default row/col config */
+        c985_wr(d, 0x0f04, 0x00000000);  /* Clear timing */
+        c985_wr(d, 0x0f08, 0x00000000);  /* Clear config */
+        c985_wr(d, 0x0f10, 0x00000000);  /* Clear control */
+        c985_wr(d, 0x0f18, 0x00000000);  /* Clear enable */
+        c985_wr(d, 0x0f40, 0x00000000);  /* Clear extra */
+        msleep(10);
+
+        /* Step 3: QPHCI reinit */
 
         /* Step 3: QPHCI reinit */
         dev_info(&d->pdev->dev, "STEP: QPHCI reinit\n");
