@@ -19,4 +19,4 @@ MODULE_INFO(depends, "videodev,videobuf2-v4l2,videobuf2-common,videobuf2-vmalloc
 
 MODULE_ALIAS("pci:v00001AF2d0000A001sv*sd*bc*sc*i*");
 
-MODULE_INFO(srcversion, "EA1BE358AF13AB5EEF59E13");
+MODULE_INFO(srcversion, "B905DFBC576E9F6C43D470F");

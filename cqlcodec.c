@@ -188,52 +188,124 @@ static int codec_initialize_memory(struct c985_poc *d)
     u32 local_1c, local_18, local_20, local_24, local_28;
     int ret;
 
+    dev_info(&d->pdev->dev, "=== MEMORY INIT START ===\n");
+
     local_1c = 7;
     local_18 = 2;
     local_20 = 0x20007;
 
-    c985_wr(d, 0x0f14, 0x20007);
-    ret = cpr_write(d, 0, local_20);
-    if (ret) return ret;
+    dev_info(&d->pdev->dev, "Initial: local_1c=%u local_18=%u local_20=0x%08x\n",
+             local_1c, local_18, local_20);
 
-    for (; local_1c > 3; local_1c--) {
-        ret = cpr_write(d, 1 << ((local_1c + 6) & 0x1f), local_1c - 1);
-        if (ret) return ret;
+    /* Write initial value to 0xf14 */
+    dev_info(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
+    c985_wr(d, 0x0f14, 0x20007);
+
+    dev_info(&d->pdev->dev, "CPR write addr=0x0 val=0x%08x\n", local_20);
+    ret = cpr_write(d, 0, local_20);
+    if (ret) {
+        dev_err(&d->pdev->dev, "MEMINT: CPR write #1 failed\n");
+        return ret;
     }
 
+    /* Row address detection loop */
+    dev_info(&d->pdev->dev, "=== ROW ADDRESS DETECTION ===\n");
+    for (; local_1c > 3; local_1c--) {
+        u32 addr = 1 << ((local_1c + 6) & 0x1f);
+        u32 val = local_1c - 1;
+
+        dev_info(&d->pdev->dev, "Row loop: local_1c=%u addr=0x%08x val=%u\n",
+                 local_1c, addr, val);
+
+        ret = cpr_write(d, addr, val);
+        if (ret) {
+            dev_err(&d->pdev->dev, "MEMINT: CPR write row failed at local_1c=%u\n", local_1c);
+            return ret;
+        }
+    }
+
+    dev_info(&d->pdev->dev, "Reading back from addr=0x0\n");
     ret = cpr_read(d, 0, &local_24);
-    if (ret) return ret;
+    if (ret) {
+        dev_err(&d->pdev->dev, "MEMINT: CPR read #1 failed\n");
+        return ret;
+    }
+
     local_1c = local_24 & 0xf;
     local_20 = (local_18 << 16) | local_1c;
+
+    dev_info(&d->pdev->dev, "Row detect result: read=0x%08x local_1c=%u local_20=0x%08x\n",
+             local_24, local_1c, local_20);
+    dev_info(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
     c985_wr(d, 0x0f14, local_20);
 
+    /* Column address detection */
+    dev_info(&d->pdev->dev, "=== COLUMN ADDRESS DETECTION ===\n");
+    dev_info(&d->pdev->dev, "CPR write addr=0x0 val=0x%08x\n", local_18);
     ret = cpr_write(d, 0, local_18);
-    if (ret) return ret;
-
-    for (; local_18 > 1; local_18--) {
-        ret = cpr_write(d, 1 << ((local_1c + 0x15) & 0x1f), local_18 - 1);
-        if (ret) return ret;
+    if (ret) {
+        dev_err(&d->pdev->dev, "MEMINT: CPR write #2 failed\n");
+        return ret;
     }
 
+    for (; local_18 > 1; local_18--) {
+        u32 addr = 1 << ((local_1c + 0x15) & 0x1f);
+        u32 val = local_18 - 1;
+
+        dev_info(&d->pdev->dev, "Col loop: local_18=%u addr=0x%08x val=%u\n",
+                 local_18, addr, val);
+
+        ret = cpr_write(d, addr, val);
+        if (ret) {
+            dev_err(&d->pdev->dev, "MEMINT: CPR write col failed at local_18=%u\n", local_18);
+            return ret;
+        }
+    }
+
+    dev_info(&d->pdev->dev, "Reading back from addr=0x0\n");
     ret = cpr_read(d, 0, &local_24);
-    if (ret) return ret;
+    if (ret) {
+        dev_err(&d->pdev->dev, "MEMINT: CPR read #2 failed\n");
+        return ret;
+    }
+
     local_18 = local_24 & 0xf;
     local_20 = (local_18 << 16) | local_1c;
+
+    dev_info(&d->pdev->dev, "Col detect result: read=0x%08x local_18=%u local_20=0x%08x\n",
+             local_24, local_18, local_20);
+    dev_info(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
     c985_wr(d, 0x0f14, local_20);
 
+    /* Final register configuration */
+    dev_info(&d->pdev->dev, "=== FINAL REGISTER CONFIG ===\n");
     local_28 = c985_rd(d, 0x0f1c);
+    dev_info(&d->pdev->dev, "Read 0xf1c = 0x%08x\n", local_28);
+    dev_info(&d->pdev->dev, "Writing 0xf1c = 0x%08x\n", local_28 & 0xfffffcff);
     c985_wr(d, 0x0f1c, local_28 & 0xfffffcff);
 
+    dev_info(&d->pdev->dev, "Writing memory controller registers:\n");
+    dev_info(&d->pdev->dev, "  0xf04 = 0x0d03110b\n");
     c985_wr(d, 0x0f04, 0x0d03110b);
+
+    dev_info(&d->pdev->dev, "  0xf08 = 0x00000003\n");
     c985_wr(d, 0x0f08, 3);
+
+    dev_info(&d->pdev->dev, "  0xf40 = 0x00000002\n");
     c985_wr(d, 0x0f40, 2);
+
+    dev_info(&d->pdev->dev, "  0xf10 = 0x05140080\n");
     c985_wr(d, 0x0f10, 0x05140080);
+
+    dev_info(&d->pdev->dev, "  0xf18 = 0x00000001\n");
     c985_wr(d, 0x0f18, 1);
 
+    dev_info(&d->pdev->dev, "Waiting 100ms for memory stabilization...\n");
     msleep(100);
+
+    dev_info(&d->pdev->dev, "=== MEMORY INIT COMPLETE ===\n");
     return 0;
 }
-
 /* -----------------------------------------------------------------------
  * AO/VO switches
  * --------------------------------------------------------------------- */
@@ -465,9 +537,9 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
 
     cqlcodec_load_default_settings(d);
 
-    ret = codec_initialize_memory(d);
-    if (ret)
-        goto err_out;
+    /* NOTE: Do NOT call codec_initialize_memory() here.
+     * It will be called by cqlcodec_fw_download() after
+     * arm_reset(0) and qphci_reinit() in the correct order. */
 
     ret = qphci_init_arm_loop(d);
     if (ret)
@@ -509,21 +581,89 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
 void cqlcodec_remove_device(struct pci_dev *pdev)
 {
     struct c985_poc *d = pci_get_drvdata(pdev);
+    u32 val, reg0, arm_reset_val;
+    unsigned long timeout;
 
     dev_info(&pdev->dev, "cqlcodec_remove_device()\n");
 
     if (!d)
         return;
 
-    if (d->irq_registered)
-        free_irq(d->pdev->irq, d);
+    if (d->bar1) {
+        /* 1. Disable interrupts first */
+        val = readl(d->bar1 + 0x4000);
+        writel(val & ~1, d->bar1 + 0x4000);
+        writel(0x7FFFFFFF, d->bar1 + 0x4030);
+        writel(0x00070000, d->bar1 + 0x804);
+    }
 
-    if (d->bar1)
+    if (d->irq_registered) {
+        free_irq(d->pdev->irq, d);
+        d->irq_registered = 0;
+    }
+
+    if (d->bar1) {
+        /* 2. CQLCodec_PowerDown sequence */
+        dev_info(&pdev->dev, "CQLCodec_PowerDown sequence\n");
+
+        /* Disable ARM via HCI */
+        writel(0x00000000, d->bar1 + 0x80C);
+
+        /* Clear mailbox */
+        writel(0x00000000, d->bar1 + 0x6CC);
+        writel(0x00000000, d->bar1 + 0x6C8);
+
+        /* Read reg 0, preserve top 3 bits, apply reset */
+        reg0 = readl(d->bar1 + 0x00);
+        writel(reg0 & 0xE0000000, d->bar1 + 0x00);
+        writel((reg0 & 0xE0000000) | 0x1FFFFFF, d->bar1 + 0x00);
+
+        /* 3. QPHCI_PowerDown sequence */
+        dev_info(&pdev->dev, "QPHCI_PowerDown sequence\n");
+
+        /* DDR into power-down/reset mode - THIS IS CRITICAL */
+        writel(0x00000004, d->bar1 + 0x0f1c);
+
+        /* Pad control - tri-state */
+        val = readl(d->bar1 + 0x50);
+        writel(val | 0x106, d->bar1 + 0x50);
+        dev_info(&pdev->dev, "Pad control: 0x%08x -> 0x%08x\n", val, val | 0x106);
+
+        /* Final control register reset */
+        writel(0x00000000, d->bar1 + 0x00);
+        writel(0x01FFFFFF, d->bar1 + 0x00);
+
+        msleep(10);
+
+        /* 4. Now do ARM halt sequence */
+        dev_info(&pdev->dev, "ARM halt\n");
+        writel(0x00000000, d->bar1 + 0x80C);
+        writel(0x00000001, d->bar1 + 0x800);
+        writel(0x00000001, d->bar1 + 0x10);
+        {
+            u32 ts = readl(d->bar1 + 0x1C);
+            writel(ts + 0xFFFF, d->bar1 + 0x18);
+        }
+        writel(0x00000108, d->bar1 + 0x10);
+        msleep(15);
+
+        timeout = jiffies + msecs_to_jiffies(3000);
+        while (readl(d->bar1 + 0x800) != 0) {
+            if (time_after(jiffies, timeout)) {
+                dev_err(&pdev->dev, "ARM reset timeout\n");
+                break;
+            }
+            udelay(10);
+        }
+        writel(0x00000000, d->bar1 + 0x10);
+
+        dev_info(&pdev->dev, "hardware shutdown complete\n");
         iounmap(d->bar1);
+        d->bar1 = NULL;
+    }
 
     pci_release_region(pdev, C985_BAR_MMIO);
 }
-
 /* -----------------------------------------------------------------------
  * Firmware download — CORRECTED
  *
@@ -555,7 +695,9 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
     u32 test_val;
     int ret;
 
-    dev_info(&d->pdev->dev, "================ FW DOWNLOAD (reset=%d) ================\n", do_reset);
+    dev_info(&d->pdev->dev,
+             "================ FW DOWNLOAD (reset=%d) ================\n",
+             do_reset);
 
     dump_full_state(d, "FW-DOWNLOAD-START");
 
@@ -575,70 +717,67 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
     }
     dev_info(&d->pdev->dev, "FW audio: %zu bytes\n", fw_aud->size);
 
-    /* CPR sanity check BEFORE reset */
-    dev_info(&d->pdev->dev, "=== CPR CHECK: BEFORE RESET ===\n");
-    cpr_write(d, 0, 0xDEADBEEF);
-    cpr_read(d, 0, &test_val);
-    dev_info(&d->pdev->dev, "CPR[0x0] = 0x%08x (expect 0xDEADBEEF) %s\n",
-             test_val, test_val == 0xDEADBEEF ? "OK" : "FAIL");
-
     if (do_reset) {
-        /* Step 1: ARM reset */
+        /* Step 1: ARM reset (halt) */
         dev_info(&d->pdev->dev, "STEP: ARM reset\n");
         ret = arm_reset(d, 0);
         if (ret)
             goto out;
 
-        /* CPR check after arm_reset */
-        dev_info(&d->pdev->dev, "=== CPR CHECK: AFTER ARM RESET ===\n");
-        cpr_write(d, 0, 0xCAFEBABE);
-        cpr_read(d, 0, &test_val);
-        dev_info(&d->pdev->dev, "CPR[0x0] = 0x%08x (expect 0xCAFEBABE) %s\n",
-                 test_val, test_val == 0xCAFEBABE ? "OK" : "FAIL");
+        /* Step 2: QPHCI_PowerUp sequence - restore from power-down state */
+        dev_info(&d->pdev->dev, "STEP: Power-up sequence\n");
+        {
+            u32 pad_ctl = c985_rd(d, 0x50);
+            dev_info(&d->pdev->dev, "Pad control before: 0x%08x\n", pad_ctl);
+            pad_ctl &= 0xFFFFFEFF;  /* Clear bit 8 */
+            c985_wr(d, 0x50, pad_ctl);
+            dev_info(&d->pdev->dev, "Pad control after:  0x%08x\n", pad_ctl);
+        }
 
-        /* Step 2: QPHCI reinit */
+        /* Restore DDR controller to power-on default BEFORE memory init */
+        dev_info(&d->pdev->dev, "DDR 0xf1c = 0x00000f00 (power-on default)\n");
+        c985_wr(d, 0x0f1c, 0x00000f00);
+
+        /* Step 3: QPHCI reinit */
         dev_info(&d->pdev->dev, "STEP: QPHCI reinit\n");
         ret = qphci_reinit(d);
         if (ret)
             goto out;
 
-        /* CPR check after reinit */
-        dev_info(&d->pdev->dev, "=== CPR CHECK: AFTER REINIT ===\n");
-        cpr_write(d, 0, 0x12345678);
-        cpr_read(d, 0, &test_val);
-        dev_info(&d->pdev->dev, "CPR[0x0] = 0x%08x (expect 0x12345678) %s\n",
-                 test_val, test_val == 0x12345678 ? "OK" : "FAIL");
-
-        /* Step 3: Memory init */
+        /* Step 4: Memory init */
         dev_info(&d->pdev->dev, "STEP: Memory init\n");
         ret = codec_initialize_memory(d);
         if (ret)
             goto out;
 
-        /* CPR check after memory init */
+        /* Verify CPR is working after memory init */
         dev_info(&d->pdev->dev, "=== CPR CHECK: AFTER MEMORY INIT ===\n");
         cpr_write(d, 0, 0xAAAAAAAA);
         cpr_read(d, 0, &test_val);
-        dev_info(&d->pdev->dev, "CPR[0x0] = 0x%08x (expect 0xAAAAAAAA) %s\n",
+        dev_info(&d->pdev->dev,
+                 "CPR[0x0] = 0x%08x (expect 0xAAAAAAAA) %s\n",
                  test_val, test_val == 0xAAAAAAAA ? "OK" : "FAIL");
 
-        /* Also check a higher address */
         cpr_write(d, 0x1000, 0x55555555);
         cpr_read(d, 0x1000, &test_val);
-        dev_info(&d->pdev->dev, "CPR[0x1000] = 0x%08x (expect 0x55555555) %s\n",
+        dev_info(&d->pdev->dev,
+                 "CPR[0x1000] = 0x%08x (expect 0x55555555) %s\n",
                  test_val, test_val == 0x55555555 ? "OK" : "FAIL");
 
         /* Dump memory controller state */
-        dev_info(&d->pdev->dev, "MEMCTL: 0xf04=0x%08x 0xf08=0x%08x 0xf10=0x%08x\n",
+        dev_info(&d->pdev->dev,
+                 "MEMCTL: 0xf04=0x%08x 0xf08=0x%08x 0xf10=0x%08x\n",
                  readl(d->bar1 + 0xf04),
                  readl(d->bar1 + 0xf08),
                  readl(d->bar1 + 0xf10));
-        dev_info(&d->pdev->dev, "MEMCTL: 0xf14=0x%08x 0xf18=0x%08x 0xf1c=0x%08x 0xf40=0x%08x\n",
+        dev_info(&d->pdev->dev,
+                 "MEMCTL: 0xf14=0x%08x 0xf18=0x%08x 0xf1c=0x%08x 0xf40=0x%08x\n",
                  readl(d->bar1 + 0xf14),
                  readl(d->bar1 + 0xf18),
                  readl(d->bar1 + 0xf1c),
                  readl(d->bar1 + 0xf40));
 
+        /* Step 5: AO/VO and GPIO setup */
         cqlcodec_ao_switch(d, !d->ao_enable);
         cqlcodec_vo_switch(d, !d->vo_enable);
         gpio_set_defaults(d);
@@ -646,24 +785,28 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
         msleep(50);
     }
 
-    /* Audio FW prep */
+    /* Audio FW prep - clear bit 13 of reg 0x00 */
     if (do_reset) {
         u32 reg0 = c985_rd(d, 0x00);
-        c985_wr(d, 0x00, reg0 & 0xffffdfff);
+        c985_wr(d, 0x00, reg0 & ~BIT(13));
         msleep(1);
     }
 
     /* Upload AUDIO FW */
-    dev_info(&d->pdev->dev, "=== UPLOAD AUDIO FW @ 0x%08x ===\n", CARD_RAM_AUDIO_BASE);
+    dev_info(&d->pdev->dev,
+             "=== UPLOAD AUDIO FW @ 0x%08x ===\n",
+             CARD_RAM_AUDIO_BASE);
     sz4 = ALIGN(fw_aud->size, 4);
     for (i = 0; i < sz4; i += 4) {
         word = 0;
         if (i < fw_aud->size)
-            memcpy(&word, fw_aud->data + i, min_t(u32, 4, fw_aud->size - i));
-        word = le32_to_cpu(word);
+            memcpy(&word, fw_aud->data + i,
+                   min_t(u32, 4, fw_aud->size - i));
+            word = le32_to_cpu(word);
         ret = cpr_write(d, CARD_RAM_AUDIO_BASE + i, word);
         if (ret) {
-            dev_err(&d->pdev->dev, "AUDIO CPR write failed at 0x%x\n", i);
+            dev_err(&d->pdev->dev,
+                    "AUDIO CPR write failed at 0x%x\n", i);
             goto out;
         }
     }
@@ -673,15 +816,19 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
     /* QPSOS from FW buffer */
     if (fw_vid->size > 0x108) {
         u32 sig;
+
         memcpy(&sig, fw_vid->data + 0x100, 4);
         sig = le32_to_cpu(sig);
-        dev_info(&d->pdev->dev, "QPSOS sig from FW buffer = 0x%08x\n", sig);
+        dev_info(&d->pdev->dev,
+                 "QPSOS sig from FW buffer = 0x%08x\n", sig);
         if (sig == 0x534f5351) {
             u16 ver;
+
             memcpy(&ver, fw_vid->data + 0x106, 2);
             ver = le16_to_cpu(ver);
             qpsos_version = ver;
-            dev_info(&d->pdev->dev, "QPSOS version=%u\n", qpsos_version);
+            dev_info(&d->pdev->dev,
+                     "QPSOS version=%u\n", qpsos_version);
         }
     }
 
@@ -693,7 +840,8 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
     cpr_write(d, reg_base + 4, 0);
 
     /* PLL setup */
-    dev_info(&d->pdev->dev, "PLL setup: chip_ver=0x%08x\n", d->chip_ver);
+    dev_info(&d->pdev->dev,
+             "PLL setup: chip_ver=0x%08x\n", d->chip_ver);
     if (d->chip_ver == 0x10020)
         c985_wr(d, PLL4_REG, PLL4_VAL_10020);
     else
@@ -703,104 +851,94 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
     c985_wr(d, 0x6CC, 0);
 
     /* Upload VIDEO FW */
-    dev_info(&d->pdev->dev, "=== UPLOAD VIDEO FW @ 0x%08x ===\n", CARD_RAM_VIDEO_BASE);
+    dev_info(&d->pdev->dev,
+             "=== UPLOAD VIDEO FW @ 0x%08x ===\n",
+             CARD_RAM_VIDEO_BASE);
     sz4 = ALIGN(fw_vid->size, 4);
     for (i = 0; i < sz4; i += 4) {
         word = 0;
         if (i < fw_vid->size)
-            memcpy(&word, fw_vid->data + i, min_t(u32, 4, fw_vid->size - i));
-        word = le32_to_cpu(word);
+            memcpy(&word, fw_vid->data + i,
+                   min_t(u32, 4, fw_vid->size - i));
+            word = le32_to_cpu(word);
         ret = cpr_write(d, CARD_RAM_VIDEO_BASE + i, word);
         if (ret) {
-            dev_err(&d->pdev->dev, "VIDEO CPR write failed at 0x%x\n", i);
+            dev_err(&d->pdev->dev,
+                    "VIDEO CPR write failed at 0x%x\n", i);
             goto out;
         }
     }
 
-    /* Verify after upload */
+    /* Verify firmware upload */
     dev_info(&d->pdev->dev, "=== FW VERIFY ===\n");
     {
         int mismatches = 0;
         u32 card_val, host_val;
         int j;
 
+        /* Check first few words of video FW */
         for (j = 0; j < 32; j += 4) {
-            cpr_read(d, j, &card_val);
+            cpr_read(d, CARD_RAM_VIDEO_BASE + j, &card_val);
             host_val = 0;
-            memcpy(&host_val, fw_vid->data + j, min_t(size_t, 4, fw_vid->size - j));
-            host_val = le32_to_cpu(host_val);
-            dev_info(&d->pdev->dev, "[0x%04x]: card=0x%08x fw=0x%08x %s\n",
-                     j, card_val, host_val,
-                     (card_val == host_val) ? "OK" : "MISMATCH");
-            if (card_val != host_val)
+            if (j < fw_vid->size)
+                memcpy(&host_val, fw_vid->data + j,
+                       min_t(size_t, 4, fw_vid->size - j));
+                host_val = le32_to_cpu(host_val);
+
+            if (card_val != host_val) {
+                dev_info(&d->pdev->dev,
+                         "[0x%04x]: card=0x%08x fw=0x%08x MISMATCH\n",
+                         j, card_val, host_val);
                 mismatches++;
+            } else {
+                dev_info(&d->pdev->dev,
+                         "[0x%04x]: card=0x%08x fw=0x%08x OK\n",
+                         j, card_val, host_val);
+            }
         }
 
+        /* Check first few words of audio FW */
         for (j = 0; j < 16; j += 4) {
             cpr_read(d, CARD_RAM_AUDIO_BASE + j, &card_val);
             host_val = 0;
-            memcpy(&host_val, fw_aud->data + j, min_t(size_t, 4, fw_aud->size - j));
-            host_val = le32_to_cpu(host_val);
-            dev_info(&d->pdev->dev, "AUD[0x%04x]: card=0x%08x fw=0x%08x %s\n",
-                     CARD_RAM_AUDIO_BASE + j, card_val, host_val,
-                     (card_val == host_val) ? "OK" : "MISMATCH");
-            if (card_val != host_val)
+            if (j < fw_aud->size)
+                memcpy(&host_val, fw_aud->data + j,
+                       min_t(size_t, 4, fw_aud->size - j));
+                host_val = le32_to_cpu(host_val);
+
+            if (card_val != host_val) {
+                dev_info(&d->pdev->dev,
+                         "AUD[0x%06x]: card=0x%08x fw=0x%08x MISMATCH\n",
+                         CARD_RAM_AUDIO_BASE + j, card_val, host_val);
                 mismatches++;
+            } else {
+                dev_info(&d->pdev->dev,
+                         "AUD[0x%06x]: card=0x%08x fw=0x%08x OK\n",
+                         CARD_RAM_AUDIO_BASE + j, card_val, host_val);
+            }
         }
 
-        dev_info(&d->pdev->dev, "FW verify: %d mismatches\n", mismatches);
+        dev_info(&d->pdev->dev,
+                 "FW verify: %d mismatches\n", mismatches);
     }
 
     dump_full_state(d, "AFTER-FW-UPLOAD");
 
-    /* Boot ARM */
     if (do_reset) {
-        usleep_range(500, 1000);
+        /* Start ARM */
         ret = arm_reset(d, 1);
         if (ret)
             goto out;
+
         msleep(150);
-
-        dev_info(&d->pdev->dev, "post-boot: 0x80C=0x%08x 0x800=0x%08x 0x6CC=0x%08x\n",
-                 readl(d->bar1 + 0x80C),
-                 readl(d->bar1 + 0x800),
-                 readl(d->bar1 + 0x6CC));
-
-        c985_wr(d, 0x4000, c985_rd(d, 0x4000) | 1);
-
-        dump_full_state(d, "POST-BOOT");
-
-        /* Test interrupt */
-        dev_info(&d->pdev->dev, "=== TEST INTERRUPT ===\n");
-        {
-            u32 before_24 = readl(d->bar1 + 0x24);
-            u32 before_6cc = readl(d->bar1 + 0x6CC);
-
-            dev_info(&d->pdev->dev, "BEFORE: 0x24=0x%08x 0x6CC=0x%08x\n",
-                     before_24, before_6cc);
-
-            c985_wr(d, 0x6CC, 0x00000001);
-            c985_wr(d, 0x6FC, 0x000000FF);
-            wmb();
-            c985_wr(d, 0x24, 0x02000000);
-
-            msleep(200);
-
-            dev_info(&d->pdev->dev, "AFTER: 0x24=0x%08x 0x6CC=0x%08x 0x6C8=0x%08x\n",
-                     readl(d->bar1 + 0x24),
-                     readl(d->bar1 + 0x6CC),
-                     readl(d->bar1 + 0x6C8));
-
-            c985_wr(d, 0x6CC, 0);
-        }
-
-        dump_full_state(d, "FINAL");
+        dump_full_state(d, "POST-ARM-BOOT");
     }
 
-    ret = 0;
-
     out:
-    release_firmware(fw_aud);
-    release_firmware(fw_vid);
+    if (fw_vid)
+        release_firmware(fw_vid);
+    if (fw_aud)
+        release_firmware(fw_aud);
+
     return ret;
 }
