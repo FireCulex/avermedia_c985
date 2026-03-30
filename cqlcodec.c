@@ -374,91 +374,119 @@ static irqreturn_t cqlcodec_interrupt_handler(int irq, void *dev_id)
     u32 pci_status, hci_status;
     int handled = 0;
 
+    /* Read interrupt status */
     pci_status = readl(d->bar1 + 0x4030);
-
-    if (!(pci_status & 0x40010000))
-        return IRQ_NONE;
-
     hci_status = readl(d->bar1 + 0x804);
 
-    dev_info(&d->pdev->dev, "IRQ: pci=0x%08x hci=0x%08x\n", pci_status, hci_status);
+    /* Not our interrupt */
+    if (!(pci_status & 0x40010000) && !(hci_status & 0x70000))
+        return IRQ_NONE;
 
-    if ((pci_status & 0x10000) || (hci_status & BIT(16))) {
-        u32 msg_status = readl(d->bar1 + 0x6C8);
-        u32 msg_data   = readl(d->bar1 + 0x6CC);
+    if (printk_ratelimit())
+        dev_info(&d->pdev->dev,
+                 "IRQ: pci=0x%08x hci=0x%08x\n",
+                 pci_status, hci_status);
 
-        if (msg_status != 0) {
-            u8 cmd   = msg_status & 0xFF;
-            u16 task = (msg_status >> 16) & 0xFFFF;
+        /*
+         * ----------------------------------------------------
+         * HCI message interrupt (bit 16)
+         * ----------------------------------------------------
+         */
+        if (hci_status & BIT(16)) {
 
-            dev_info(&d->pdev->dev,
-                     "IRQ: cmd=0x%02x task=%u st=0x%08x dat=0x%08x\n",
-                     cmd, task, msg_status, msg_data);
-            dev_info(&d->pdev->dev,
-                     "IRQ: 6B0=0x%08x 6B4=0x%08x 6B8=0x%08x 6BC=0x%08x\n",
-                     readl(d->bar1 + 0x6B0), readl(d->bar1 + 0x6B4),
-                     readl(d->bar1 + 0x6B8), readl(d->bar1 + 0x6BC));
-            dev_info(&d->pdev->dev,
-                     "IRQ: 6F0=0x%08x 6F4=0x%08x 6F8=0x%08x 6FC=0x%08x\n",
-                     readl(d->bar1 + 0x6F0), readl(d->bar1 + 0x6F4),
-                     readl(d->bar1 + 0x6F8), readl(d->bar1 + 0x6FC));
+            u32 msg_status = readl(d->bar1 + 0x6C8);
+            u32 msg_data   = readl(d->bar1 + 0x6CC);
 
-            switch (cmd) {
-                case 0x01:
-                    dev_info(&d->pdev->dev, "IRQ: Encoder STARTED\n");
-                    break;
-                case 0x02:
-                    dev_info(&d->pdev->dev, "IRQ: Encoder STOPPED\n");
-                    break;
-                case 0x06:
-                    dev_info(&d->pdev->dev, "IRQ: Config updated\n");
-                    break;
-                case 0x10:
-                    dev_info(&d->pdev->dev, "IRQ: VIU ack\n");
-                    break;
-                case 0x40:
-                    dev_info(&d->pdev->dev, "IRQ: VIDEO FRAME seq=%u\n", d->sequence++);
-                    break;
-                case 0x41:
-                    dev_info(&d->pdev->dev, "IRQ: AUDIO FRAME\n");
-                    break;
-                case 0x80:
-                    dev_info(&d->pdev->dev, "IRQ: ERROR 0x%08x\n", msg_data);
-                    break;
-                case 0xF1:
-                    dev_info(&d->pdev->dev, "IRQ: SystemOpen ack\n");
-                    break;
-                case 0xF2:
-                    dev_info(&d->pdev->dev, "IRQ: SystemLink ack\n");
-                    break;
-                default:
-                    dev_info(&d->pdev->dev, "IRQ: cmd=0x%02x\n", cmd);
-                    break;
+            if (msg_status) {
+
+                u8  cmd  = msg_status & 0xFF;
+                u16 task = (msg_status >> 16) & 0xFFFF;
+
+                dev_info(&d->pdev->dev,
+                         "IRQ: cmd=0x%02x task=%u st=0x%08x dat=0x%08x\n",
+                         cmd, task, msg_status, msg_data);
+
+                switch (cmd) {
+                    case 0x01:
+                        dev_info(&d->pdev->dev, "IRQ: Encoder STARTED\n");
+                        break;
+                    case 0x02:
+                        dev_info(&d->pdev->dev, "IRQ: Encoder STOPPED\n");
+                        break;
+                    case 0x06:
+                        dev_info(&d->pdev->dev, "IRQ: Config updated\n");
+                        break;
+                    case 0x10:
+                        dev_info(&d->pdev->dev, "IRQ: VIU ack\n");
+                        break;
+                    case 0x40:
+                        dev_info(&d->pdev->dev,
+                                 "IRQ: VIDEO FRAME seq=%u\n",
+                                 d->sequence++);
+                        break;
+                    case 0x41:
+                        dev_info(&d->pdev->dev, "IRQ: AUDIO FRAME\n");
+                        break;
+                    case 0x80:
+                        dev_info(&d->pdev->dev,
+                                 "IRQ: ERROR 0x%08x\n",
+                                 msg_data);
+                        break;
+                    case 0xF1:
+                        dev_info(&d->pdev->dev, "IRQ: SystemOpen ack\n");
+                        break;
+                    case 0xF2:
+                        dev_info(&d->pdev->dev, "IRQ: SystemLink ack\n");
+                        break;
+                    default:
+                        dev_info(&d->pdev->dev,
+                                 "IRQ: Unknown cmd=0x%02x\n",
+                                 cmd);
+                        break;
+                }
+
+                /* ACK ARM message */
+                writel(0, d->bar1 + 0x6C8);
             }
 
-            writel(0, d->bar1 + 0x6C8);
+            /* Clear HCI interrupt bit */
+            writel(BIT(16), d->bar1 + 0x804);
+
+            handled = 1;
         }
 
-        writel(BIT(16), d->bar1 + 0x804);
-        handled = 1;
-    }
+        /*
+         * ----------------------------------------------------
+         * DMA read done (bit 17)
+         * ----------------------------------------------------
+         */
+        if (hci_status & BIT(17)) {
+            dev_info(&d->pdev->dev, "IRQ: DMA read done\n");
+            writel(BIT(17), d->bar1 + 0x804);
+            handled = 1;
+        }
 
-    if (hci_status & BIT(17)) {
-        dev_info(&d->pdev->dev, "IRQ: DMA read done\n");
-        writel(BIT(17), d->bar1 + 0x804);
-        handled = 1;
-    }
+        /*
+         * ----------------------------------------------------
+         * DMA write done (bit 18)
+         * ----------------------------------------------------
+         */
+        if (hci_status & BIT(18)) {
+            dev_info(&d->pdev->dev, "IRQ: DMA write done\n");
+            writel(BIT(18), d->bar1 + 0x804);
+            handled = 1;
+        }
 
-    if (hci_status & BIT(18)) {
-        dev_info(&d->pdev->dev, "IRQ: DMA write done\n");
-        writel(BIT(18), d->bar1 + 0x804);
-        handled = 1;
-    }
+        /*
+         * ----------------------------------------------------
+         * Now clear PCI interrupt status LAST
+         * ----------------------------------------------------
+         */
+        if (pci_status & 0x10000)
+            writel(0x10000, d->bar1 + 0x4030);
 
     if (pci_status & 0x40000000)
         writel(0x40000000, d->bar1 + 0x4030);
-    if (pci_status & 0x10000)
-        writel(0x10000, d->bar1 + 0x4030);
 
     return handled ? IRQ_HANDLED : IRQ_NONE;
 }

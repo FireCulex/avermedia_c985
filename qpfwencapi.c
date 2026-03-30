@@ -280,9 +280,6 @@ static void write_encoder_config(struct c985_poc *d, struct hdmi_video_info *vin
 static int enable_hci_communication(struct c985_poc *d)
 {
     u32 val;
-    int i;
-
-    dev_info(&d->pdev->dev, "HCI: enabling ARM communication\n");
 
     /* Verify ARM is running */
     val = readl(d->bar1 + 0x80C);
@@ -291,76 +288,14 @@ static int enable_hci_communication(struct c985_poc *d)
         return -EIO;
     }
 
-    /* Try different interrupt enable mechanisms */
-
-    /* Method 1: Write to 0x800 (HCI interrupt mask) */
-    dev_info(&d->pdev->dev, "HCI: trying method 1 (0x800)\n");
-    writel(0x70000, d->bar1 + 0x800);
-    writel(0x70000, d->bar1 + 0x804);  /* Clear pending */
-    msleep(10);
-
-    /* Method 2: Try 0x808 (might be ARM interrupt enable) */
-    dev_info(&d->pdev->dev, "HCI: trying method 2 (0x808)\n");
-    val = readl(d->bar1 + 0x808);
-    dev_info(&d->pdev->dev, "HCI: 0x808 before = 0x%08x\n", val);
-    writel(val | 0x70000, d->bar1 + 0x808);
-    val = readl(d->bar1 + 0x808);
-    dev_info(&d->pdev->dev, "HCI: 0x808 after = 0x%08x\n", val);
-
-    /* Method 3: Try writing directly to ARM's interrupt controller base */
-    dev_info(&d->pdev->dev, "HCI: trying method 3 (CPR write to ARM NVIC)\n");
-    /* ARM Cortex-M NVIC is at 0xE000E100, but we need to translate this
-     * to the card's address space. The firmware loads at specific addresses.
-     * Try writing to what might be the ARM's interrupt enable register.
-     */
-
-    /* Method 4: Enable PCI-level interrupt routing */
-    dev_info(&d->pdev->dev, "HCI: enabling PCI interrupts\n");
-    val = readl(d->bar1 + 0x04);
-    writel(val | 0x1000000, d->bar1 + 0x04);
-
-    val = readl(d->bar1 + 0x4000);
-    writel(val | 0x1, d->bar1 + 0x4000);
-
-    /* Clear all pending */
-    writel(0x70000, d->bar1 + 0x804);
-    writel(0x40010000, d->bar1 + 0x4030);
-
-    /* Method 5: Try the "streaming port" register that showed up */
-    dev_info(&d->pdev->dev, "HCI: 0x840 = 0x%08x\n", readl(d->bar1 + 0x840));
-
-    /* Method 6: Write to 0x80C to kick ARM? */
-    dev_info(&d->pdev->dev, "HCI: trying method 6 (kick ARM via 0x80C)\n");
-    writel(1, d->bar1 + 0x80C);
-
-    /* Wait and check */
-    msleep(100);
-
-    dev_info(&d->pdev->dev, "HCI: final state check\n");
-    dev_info(&d->pdev->dev, "  0x800 = 0x%08x\n", readl(d->bar1 + 0x800));
-    dev_info(&d->pdev->dev, "  0x804 = 0x%08x\n", readl(d->bar1 + 0x804));
-    dev_info(&d->pdev->dev, "  0x808 = 0x%08x\n", readl(d->bar1 + 0x808));
-    dev_info(&d->pdev->dev, "  0x80C = 0x%08x\n", readl(d->bar1 + 0x80C));
-    dev_info(&d->pdev->dev, "  0x810 = 0x%08x\n", readl(d->bar1 + 0x810));
-
-    /* Try sending a test interrupt */
-    dev_info(&d->pdev->dev, "HCI: sending test interrupt\n");
-    writel(0x2000000, d->bar1 + 0x24);
-    msleep(50);
-
-    val = readl(d->bar1 + 0x24);
-    dev_info(&d->pdev->dev, "HCI: 0x24 after interrupt = 0x%08x\n", val);
-
-    if (val & 0x2000000) {
-        dev_warn(&d->pdev->dev, "ARM did not clear test interrupt!\n");
-    } else {
-        dev_info(&d->pdev->dev, "ARM cleared test interrupt - good sign!\n");
+    /* Check mailbox is clear */
+    val = readl(d->bar1 + 0x6CC);
+    if (val & 1) {
+        dev_warn(&d->pdev->dev, "HCI: mailbox busy, clearing\n");
+        writel(0, d->bar1 + 0x6CC);
     }
 
-    /* Check if ARM sent anything back */
-    dev_info(&d->pdev->dev, "  0x6C8 = 0x%08x\n", readl(d->bar1 + 0x6C8));
-    dev_info(&d->pdev->dev, "  0x6CC = 0x%08x\n", readl(d->bar1 + 0x6CC));
-
+    dev_info(&d->pdev->dev, "HCI: ARM communication ready\n");
     return 0;
 }
 
