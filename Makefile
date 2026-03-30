@@ -13,7 +13,6 @@ $(MODULE_NAME)-objs := \
 	ti3101.o \
 	nuc100.o \
 	diag.o \
-	mailbox.o \
 	project.o \
 	qphci.o \
 	qpfwapi.o \

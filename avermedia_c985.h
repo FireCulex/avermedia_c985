@@ -100,7 +100,7 @@ struct c985_poc {
 #define CARD_RAM_AUDIO_BASE 0x00100000
 
 /* PLL defaults */
-#define PLL4_REG            0x0200
+#define PLL4_REG            0x200
 #define PLL4_VAL_10020      0x00030130
 #define PLL5_REG            0x00cc
 #define PLL5_VAL_DEFAULT    0x00010239

@@ -54,6 +54,8 @@ static int c985_buf_prepare(struct vb2_buffer *vb)
 static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
 {
     struct c985_poc *d = vb2_get_drv_priv(vq);
+    struct c985_buffer *buf, *tmp;
+    unsigned long flags;
     int ret;
 
     dev_info(&d->pdev->dev, "start_streaming: count=%u\n", count);
@@ -63,6 +65,14 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
     ret = qpfwencapi_start(d);
     if (ret) {
         dev_err(&d->pdev->dev, "encoder start failed: %d\n", ret);
+
+        /* Return all buffers on failure to avoid vb2 WARN */
+        spin_lock_irqsave(&d->buf_lock, flags);
+        list_for_each_entry_safe(buf, tmp, &d->buf_list, list) {
+            list_del(&buf->list);
+            vb2_buffer_done(&buf->vb.vb2_buf, VB2_BUF_STATE_QUEUED);
+        }
+        spin_unlock_irqrestore(&d->buf_lock, flags);
         return ret;
     }
 
@@ -106,7 +116,7 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
     }
 
     /* In c985_start_streaming, add this debug */
-    u8 buf[64];
+    u8 buf2[64];
     int i;
 
 
