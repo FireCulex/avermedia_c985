@@ -14,6 +14,8 @@
 #include "qphci.h"
 #include "qpfwapi.h"
 
+#include "interrupts.h"
+
 #define DRV_NAME "avermedia_c985_poc"
 
 /* -----------------------------------------------------------------------
@@ -312,136 +314,6 @@ void cqlcodec_load_default_settings(struct c985_poc *d)
     dev_info(&d->pdev->dev, "CQLCodec: defaults loaded\n");
 }
 
-/* -----------------------------------------------------------------------
- * Interrupt handler
- * --------------------------------------------------------------------- */
-/* Updated interrupt handler using the new functions: */
-
-static irqreturn_t cqlcodec_interrupt_handler(int irq, void *dev_id)
-{
-    struct c985_poc *d = dev_id;
-    u32 int_status, hci_status, mm_status;
-    u32 clear_mask = 0;
-
-    /* Read interrupt status registers */
-    int_status = readl(d->bar1 + REG_INT_STATUS);
-    hci_status = readl(d->bar1 + REG_HCI_INT_CTRL);
-    mm_status  = readl(d->bar1 + REG_HOST_TO_ARM_TRIG);
-
-    /* Not our interrupt */
-    if (!int_status && !hci_status && !(mm_status & 0x1000000))
-        return IRQ_NONE;
-
-    if (printk_ratelimit())
-        dev_info(&d->pdev->dev,
-                 "IRQ: INT_STATUS=0x%08x HCI=0x%08x MM=0x%08x\n",
-                 int_status, hci_status, mm_status);
-
-        /* Clear mailbox interrupt */
-        if (mm_status & 0x1000000) {
-            mm_clear_interrupt(d);
-        }
-
-        /* HCI ARM message interrupt */
-        if (hci_status & HCI_INT_ARM_MSG) {
-            clear_mask |= DM_INT_ARM_MSG;
-
-            u32 arm_response = readl(d->bar1 + REG_ARM_RESPONSE);
-            u32 arm_data     = readl(d->bar1 + REG_ARM_RESP_DATA);
-
-            if (arm_response) {
-                u8  cmd  = arm_response & 0xFF;
-                u16 task = (arm_response >> 16) & 0xFFFF;
-
-                dev_info(&d->pdev->dev,
-                         "IRQ: cmd=0x%02x task=%u response=0x%08x data=0x%08x\n",
-                         cmd, task, arm_response, arm_data);
-
-                switch (cmd) {
-                    case ARM_CMD_START:
-                        dev_info(&d->pdev->dev, "IRQ: Encoder STARTED\n");
-                        break;
-                    case ARM_CMD_STOP:
-                        dev_info(&d->pdev->dev, "IRQ: Encoder STOPPED\n");
-                        break;
-                    case ARM_CMD_UPDATE_CONFIG:
-                        dev_info(&d->pdev->dev, "IRQ: Config updated\n");
-                        break;
-                    case ARM_CMD_SET_VIU_SYNC:
-                        dev_info(&d->pdev->dev, "IRQ: VIU ack\n");
-                        break;
-                    case ARM_CMD_VIDEO_FRAME:
-                        dev_info(&d->pdev->dev,
-                                 "IRQ: VIDEO FRAME seq=%u\n",
-                                 d->sequence++);
-                        break;
-                    case ARM_CMD_AUDIO_FRAME:
-                        dev_info(&d->pdev->dev, "IRQ: AUDIO FRAME\n");
-                        break;
-                    case ARM_CMD_ERROR:
-                        dev_info(&d->pdev->dev,
-                                 "IRQ: ERROR 0x%08x\n",
-                                 arm_data);
-                        break;
-                    case ARM_CMD_SYSTEM_OPEN:
-                        dev_info(&d->pdev->dev, "IRQ: SystemOpen ack\n");
-                        break;
-                    case ARM_CMD_SYSTEM_LINK:
-                        dev_info(&d->pdev->dev, "IRQ: SystemLink ack\n");
-                        break;
-                    default:
-                        dev_info(&d->pdev->dev,
-                                 "IRQ: Unknown cmd=0x%02x\n",
-                                 cmd);
-                        break;
-                }
-
-                /* ACK ARM message */
-                writel(0, d->bar1 + REG_ARM_RESPONSE);
-            }
-        }
-
-        if (hci_status & HCI_INT_DMA_READ) {
-            dev_info(&d->pdev->dev, "IRQ: DMA read complete\n");
-            clear_mask |= DM_INT_DMA_READ;
-        }
-
-        if (hci_status & HCI_INT_DMA_WRITE) {
-            dev_info(&d->pdev->dev, "IRQ: DMA write complete\n");
-            clear_mask |= DM_INT_DMA_WRITE;
-        }
-
-        /* Clear HCI interrupts */
-        if (clear_mask) {
-            dm_clear_interrupt(d, clear_mask);
-        }
-
-        return IRQ_HANDLED;
-}
-
-
-/* -----------------------------------------------------------------------
- * Register ISR
- * --------------------------------------------------------------------- */
-int cqlcodec_register_isr(struct c985_poc *d)
-{
-    int ret;
-
-    dev_info(&d->pdev->dev, "CQLCodec: register ISR\n");
-
-    ret = request_irq(d->pdev->irq, cqlcodec_interrupt_handler,
-                      IRQF_SHARED, DRV_NAME, d);
-    if (ret) {
-        dev_err(&d->pdev->dev, "Failed to register IRQ %d: %d\n",
-                d->pdev->irq, ret);
-        d->irq_registered = 0;
-        return ret;
-    }
-
-    d->irq_registered = 1;
-    dev_info(&d->pdev->dev, "CQLCodec: IRQ %d registered\n", d->pdev->irq);
-    return 0;
-}
 
 /* -----------------------------------------------------------------------
  * GPIO defaults
@@ -468,9 +340,14 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
 
     pci_set_master(pdev);
 
-    ret = pci_request_region(pdev, C985_BAR_MMIO, DRV_NAME);
+    /* Request both BARs */
+    ret = pci_request_region(pdev, 0, DRV_NAME);  /* BAR0 - DMA engines */
     if (ret)
         return ret;
+
+    ret = pci_request_region(pdev, C985_BAR_MMIO, DRV_NAME);  /* BAR1 - registers */
+    if (ret)
+        goto err_bar0;
 
     d = devm_kzalloc(&pdev->dev, sizeof(*d), GFP_KERNEL);
     if (!d) {
@@ -479,10 +356,19 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
     }
 
     d->pdev = pdev;
+
+    /* Map BAR0 - DMA engine registers (PED_BAR0_REGISTERS) */
+    d->bar0 = pci_ioremap_bar(pdev, 0);
+    if (!d->bar0) {
+        ret = -ENOMEM;
+        goto err_region;
+    }
+
+    /* Map BAR1 - chip registers */
     d->bar1 = pci_ioremap_bar(pdev, C985_BAR_MMIO);
     if (!d->bar1) {
         ret = -ENOMEM;
-        goto err_region;
+        goto err_bar1;
     }
 
     pci_set_drvdata(pdev, d);
@@ -515,7 +401,7 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
     gpio_set_defaults(d);
 
     /* Step 5: Register ISR */
-    ret = cqlcodec_register_isr(d);
+    ret = pci_interrupt_service_register(d);
     if (ret) {
         dev_warn(&pdev->dev, "ISR registration failed\n");
         goto err_out;
@@ -531,13 +417,15 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
     err_out:
     if (d->irq_registered)
         free_irq(d->pdev->irq, d);
-    if (d->bar1)
-        iounmap(d->bar1);
+    iounmap(d->bar1);
+    err_bar1:
+    iounmap(d->bar0);
     err_region:
     pci_release_region(pdev, C985_BAR_MMIO);
+    err_bar0:
+    pci_release_region(pdev, 0);
     return ret;
 }
-
 /* -----------------------------------------------------------------------
  * Device remove
  * --------------------------------------------------------------------- */
@@ -550,11 +438,13 @@ void cqlcodec_remove_device(struct pci_dev *pdev)
     if (!d)
         return;
 
-    if (d->bar1) {
+    if (d->bar0) {
         /* Disable interrupt generation */
-        u32 val = readl(d->bar1 + 0x4000);
-        writel(val & ~1, d->bar1 + 0x4000);
+        u32 val = readl(d->bar0 + PED_DMA_COMMON_CONTROL_STATUS);
+        writel(val & ~PED_GLOBAL_INT_ENABLE, d->bar0 + PED_DMA_COMMON_CONTROL_STATUS);
+    }
 
+    if (d->bar1) {
         /* Clear pending status */
         writel(readl(d->bar1 + REG_PCI_INT_STATUS), d->bar1 + REG_PCI_INT_STATUS);
         writel(0x00070000, d->bar1 + 0x804);
@@ -568,12 +458,19 @@ void cqlcodec_remove_device(struct pci_dev *pdev)
     }
 
     if (d->bar1) {
-        dev_info(&pdev->dev, "hardware shutdown complete\n");
         iounmap(d->bar1);
         d->bar1 = NULL;
     }
 
+    if (d->bar0) {
+        iounmap(d->bar0);
+        d->bar0 = NULL;
+    }
+
     pci_release_region(pdev, C985_BAR_MMIO);
+    pci_release_region(pdev, 0);
+
+    dev_info(&pdev->dev, "hardware shutdown complete\n");
 }
 /* -----------------------------------------------------------------------
  * Firmware download — CORRECTED
@@ -829,49 +726,6 @@ static int cqlcodec_reset(struct c985_poc *d)
     msleep(5);
 
     /* 10. Skip AllocEncodeTask(1) for now */
-
-    return 0;
-}
-
-/* In cqlcodec.c or a new dm.c file: */
-
-/**
- * dm_clear_interrupt - Clear HCI/DMA interrupts
- * @d: device structure
- * @int_mask: bitmask of interrupts to clear
- *            DM_INT_ARM_MSG  (0x01) - ARM message interrupt (bit 16)
- *            DM_INT_DMA_WRITE (0x02) - DMA write complete (bit 18)
- *            DM_INT_DMA_READ  (0x04) - DMA read complete (bit 17)
- *
- * Clears the specified interrupts by reading REG_HCI_INT_CTRL (0x800),
- * masking off bits 16-18, setting the requested clear bits, and writing back.
- *
- * Returns: 0 on success
- */
-int dm_clear_interrupt(struct c985_poc *d, u32 int_mask)
-{
-    u32 hci_val;
-    u32 clear_bits = 0;
-
-    /* Map input mask to HCI register bits */
-    if (int_mask & DM_INT_ARM_MSG)
-        clear_bits |= BIT(16);
-    if (int_mask & DM_INT_DMA_READ)
-        clear_bits |= BIT(17);
-    if (int_mask & DM_INT_DMA_WRITE)
-        clear_bits |= BIT(18);
-
-    if (!clear_bits)
-        return 0;
-
-    /* Read current value */
-    hci_val = readl(d->bar1 + REG_HCI_INT_CTRL);
-
-    /* Mask off bits 16-18, then set bits to clear */
-    hci_val = (hci_val & 0xFFF8FFFF) | clear_bits;
-
-    /* Write back to clear */
-    writel(hci_val, d->bar1 + REG_HCI_INT_CTRL);
 
     return 0;
 }
