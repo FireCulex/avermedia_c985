@@ -67,6 +67,7 @@ struct c985_poc {
     unsigned int width;
     unsigned int height;
     unsigned int sequence;
+
     u32 buf_count;
     u32 buf_size;
 
@@ -86,16 +87,21 @@ struct c985_poc {
     dma_addr_t current_dma_addr;
     u32 current_dma_len;
 
+    int hdmi_signal_cached;
 
-
+    void __iomem *bar0;         /* BAR0 = pRegisters */
+    int num_dma_channels;       /* m_NumDmaAvailable */
 };
+
+#define DRV_NAME "avermedia_c985_poc"
+#define DRV_DESC "AVerMedia Live Gamer HD Series (C985)"
 
 
 /* BAR indices */
 #define C985_BAR_MMIO       1
 
 /* Registers (BAR1 offsets) */
-#define REG_ARM_CTRL        0x0000
+
 #define REG_CLOCK_GATE      0x0010
 #define REG_WATCHDOG_SET    0x0018
 #define REG_TIMESTAMP       0x001c
@@ -112,10 +118,10 @@ struct c985_poc {
 #define REG_CPR_WR_ADDR     0x078c
 #define REG_CPR_WR_CTL      0x0790
 #define REG_CPR_WR_DATA     0x0794
-#define REG_ARM_RESET       0x0800
-#define REG_ARM_BOOT        0x080c
-#define REG_MEM_WIN_BASE    0x081c
-#define REG_MEM_CTL         0x0840
+
+
+
+
 
 /* Bits */
 #define AO_ENABLE_BIT       BIT(1)

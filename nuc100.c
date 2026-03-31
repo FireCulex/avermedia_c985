@@ -192,9 +192,18 @@ int nuc100_init(struct c985_poc *d)
 
 int nuc100_get_hdmi_status(struct c985_poc *d)
 {
+    static unsigned long last_check = 0;
+    unsigned long now = jiffies;
     u8 busy, status;
     int retries = 0;
     u8 addr7 = NUC100_I2C_ADDR >> 1;
+
+    /* Rate limit: minimum 50ms between checks (like Windows driver) */
+    if (last_check && time_before(now, last_check + msecs_to_jiffies(50))) {
+        /* Return cached result or just "unknown" */
+        return d->hdmi_signal_cached;
+    }
+    last_check = now;
 
     msleep(5);
 
@@ -215,10 +224,12 @@ int nuc100_get_hdmi_status(struct c985_poc *d)
         return -EIO;
 
     if (status & 0x04) {
+        d->hdmi_signal_cached = 1;
         dev_info(&d->pdev->dev, "HDMI: signal detected (status=0x%02x)\n", status);
         return 1;
     }
 
+    d->hdmi_signal_cached = 0;
     dev_info(&d->pdev->dev, "HDMI: no signal (status=0x%02x)\n", status);
     return 0;
 }

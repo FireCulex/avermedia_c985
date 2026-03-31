@@ -81,7 +81,6 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
     if (ret) {
         dev_err(&d->pdev->dev, "encoder start failed: %d\n", ret);
 
-        /* Return all buffers on failure to avoid vb2 WARN */
         spin_lock_irqsave(&d->buf_lock, flags);
         list_for_each_entry_safe(buf, tmp, &d->buf_list, list) {
             list_del(&buf->list);
@@ -155,6 +154,9 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
         u32 val = readl(d->bar1 + 0x6B0 + (i * 4));
         dev_info(&d->pdev->dev, "BAR1[0x%03x] = 0x%08x\n", 0x6B0 + (i * 4), val);
     }
+
+    /* That's it - no blocking diagnostics */
+
     return 0;
 }
 
@@ -167,6 +169,7 @@ static void c985_stop_streaming(struct vb2_queue *vq)
     dev_info(&d->pdev->dev, "stop_streaming\n");
 
     qpfwencapi_stop(d);
+    msleep(100);
 
     spin_lock_irqsave(&d->buf_lock, flags);
     list_for_each_entry_safe(buf, tmp, &d->buf_list, list) {
@@ -174,6 +177,9 @@ static void c985_stop_streaming(struct vb2_queue *vq)
         vb2_buffer_done(&buf->vb.vb2_buf, VB2_BUF_STATE_ERROR);
     }
     spin_unlock_irqrestore(&d->buf_lock, flags);
+
+    d->sequence = 0;
+    dev_info(&d->pdev->dev, "stop_streaming complete\n");
 }
 
 static void c985_buf_queue(struct vb2_buffer *vb)

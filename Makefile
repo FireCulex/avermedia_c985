@@ -19,7 +19,8 @@ $(MODULE_NAME)-objs := \
 	qpfwencapi.o \
 	encoder.o \
 	pciecntl.o \
-	v4l2.o
+	v4l2.o \
+	interrupts.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PWD  := $(shell pwd)

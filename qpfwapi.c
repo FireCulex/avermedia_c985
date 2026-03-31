@@ -8,7 +8,7 @@
 #include <linux/pci.h>
 #include "avermedia_c985.h"
 #include "qpfwapi.h"
-
+#include "cqlcodec.h"
 /*
  * Wait for mailbox to be ready (previous message consumed).
  */
@@ -75,64 +75,22 @@ void qpfwapi_ack_arm_message(struct c985_poc *d)
 int qpfwapi_send_message(struct c985_poc *d, u32 task_id, u32 message)
 {
     u32 status_word;
-    u32 reg24;
-    int ret;
 
-    ret = qpfwapi_mailbox_ready(d, 500);
-    if (ret)
-        return ret;
-
-    /* Clear any pending ARM response first */
-    qpfwapi_ack_arm_message(d);
-
-    /*
-     * Build status word:
-     *   bits [31:16] = task_id
-     *   bit  [8]     = 0 (not ACK)
-     *   bit  [0]     = 1 (message pending)
-     */
+    /* Build status word */
     status_word = (message & 0xffff0000) | 1;
 
     dev_dbg(&d->pdev->dev,
             "FWAPI: send 0x6CC=0x%08x 0x6FC=0x%08x\n",
             status_word, message);
 
-    /*
-     * Write order from Windows driver:
-     * 1. Status to 0x6CC
-     * 2. Message to 0x6FC
-     * 3. Trigger interrupt
-     */
+    /* Write mailbox registers */
     writel(status_word, d->bar1 + REG_MSG_STATUS);
     writel(message, d->bar1 + REG_MSG_DATA);
     wmb();
 
-    /*
-     * Trigger ARM interrupt via reg 0x24 bit 25.
-     *
-     * PCI_SetInterrupt checks if already set before writing.
-     * But since ARM isn't clearing it, try unconditional write.
-     */
-    reg24 = readl(d->bar1 + 0x24);
-
-    /* Try clearing first, then setting (edge trigger) */
-    if (reg24 & 0x2000000) {
-        writel(reg24 & ~0x2000000, d->bar1 + 0x24);
-        wmb();
-        udelay(10);
-    }
-
-    /* Now set the interrupt */
+    /* Trigger ARM interrupt */
     writel(0x2000000, d->bar1 + 0x24);
     wmb();
-
-    /* Wait for ARM to consume */
-    ret = qpfwapi_mailbox_ready(d, 2000);
-    if (ret) {
-        dev_err(&d->pdev->dev,
-                "FWAPI: ARM didn't consume msg 0x%08x\n", message);
-        return ret;
-    }
 
     return 0;
 }
@@ -150,5 +108,26 @@ int qpfwapi_get_arm_message(struct c985_poc *d,
     if (p2)     *p2     = readl(d->bar1 + 0x6B8);
     if (p3)     *p3     = readl(d->bar1 + 0x6BC);
     if (p4)     *p4     = readl(d->bar1 + 0x6C0);
+    return 0;
+}
+/**
+ * mm_clear_interrupt - Clear mailbox interrupt
+ * @d: device structure
+ *
+ * Clears the mailbox interrupt by writing 0x1000000 to REG_HOST_TO_ARM_TRIG (0x24)
+ * if bit 24 is set.
+ *
+ * Returns: 0 on success
+ */
+int mm_clear_interrupt(struct c985_poc *d)
+{
+    u32 mm_status;
+
+    mm_status = readl(d->bar1 + REG_HOST_TO_ARM_TRIG);
+
+    if (mm_status & 0x1000000) {
+        writel(0x1000000, d->bar1 + REG_HOST_TO_ARM_TRIG);
+    }
+
     return 0;
 }

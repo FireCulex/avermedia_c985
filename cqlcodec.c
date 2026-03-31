@@ -12,6 +12,9 @@
 #include "cqlcodec.h"
 #include "cpr.h"
 #include "qphci.h"
+#include "qpfwapi.h"
+
+#include "interrupts.h"
 
 #include "encoder.h"
 
@@ -63,89 +66,6 @@ static void dump_full_state(struct c985_poc *d, const char *tag)
              readl(d->bar1 + 0x00));
 }
 
-/* -----------------------------------------------------------------------
- * ARM reset — matches DM_ResetArm exactly
- * --------------------------------------------------------------------- */
-static int arm_reset(struct c985_poc *d, int run)
-{
-    u32 arm_reset_val, ts;
-    unsigned long timeout;
-
-    dev_info(&d->pdev->dev, "arm_reset(run=%d)\n", run);
-
-    if (run == 0) {
-        c985_wr(d, 0x00, 0x00000000);
-        c985_wr(d, 0x80C, 0x00000000);
-        c985_wr(d, 0x800, 0x00000001);
-        c985_wr(d, 0x10, 0x00000001);
-
-        ts = c985_rd(d, 0x1C);
-        c985_wr(d, 0x18, ts + 0xffff);
-        c985_wr(d, 0x10, 0x00000108);
-
-        msleep(15);
-
-        timeout = jiffies + msecs_to_jiffies(3000);
-        for (;;) {
-            arm_reset_val = c985_rd(d, 0x800);
-            if (arm_reset_val == 0)
-                break;
-            if (time_after(jiffies, timeout)) {
-                dev_err(&d->pdev->dev, "ARM reset timeout (0x800=0x%08x)\n",
-                        arm_reset_val);
-                return -ETIMEDOUT;
-            }
-            udelay(10);
-        }
-
-        c985_wr(d, 0x10, 0x00000000);
-
-        /* Post-reset cleanup */
-        c985_wr(d, 0x6CC, 0x00000000);
-        c985_wr(d, 0x80C, 0x00000000);
-
-        dev_info(&d->pdev->dev, "ARM halted\n");
-    } else {
-        /* Start ARM */
-        c985_wr(d, 0x6CC, 0x00000000);
-        c985_wr(d, 0x80C, 0x00000001);
-
-        dev_info(&d->pdev->dev, "=== ARM BOOT MONITOR ===\n");
-        {
-            int i;
-            for (i = 0; i < 30; i++) {
-                u32 arm_run = readl(d->bar1 + 0x80C);
-                u32 r6c8 = readl(d->bar1 + 0x6C8);
-                u32 r6cc = readl(d->bar1 + 0x6CC);
-                u32 r800 = readl(d->bar1 + 0x800);
-                u32 r804 = readl(d->bar1 + 0x804);
-
-                dev_info(&d->pdev->dev,
-                         "BOOT[%02d]: 80C=%d 6C8=0x%08x 6CC=0x%08x 800=0x%08x 804=0x%08x\n",
-                         i, arm_run, r6c8, r6cc, r800, r804);
-
-                if (r6c8 & 1) {
-                    dev_info(&d->pdev->dev, "*** ARM sent boot message! ***\n");
-                    dev_info(&d->pdev->dev, "  6B0=0x%08x 6B4=0x%08x 6B8=0x%08x 6BC=0x%08x\n",
-                             readl(d->bar1 + 0x6B0),
-                             readl(d->bar1 + 0x6B4),
-                             readl(d->bar1 + 0x6B8),
-                             readl(d->bar1 + 0x6BC));
-                    c985_wr(d, 0x6C8, 0);
-                }
-
-                if (arm_run == 1 && i >= 5)
-                    break;
-
-                msleep(100);
-            }
-        }
-
-        dump_full_state(d, "POST-ARM-BOOT");
-    }
-
-    return 0;
-}
 
 /* -----------------------------------------------------------------------
  * Firmware upload via CPR
@@ -202,7 +122,7 @@ static int codec_initialize_memory(struct c985_poc *d)
 
     /* Write initial value to 0xf14 */
     dev_info(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
-    c985_wr(d, 0x0f14, 0x20007);
+    writel(local_20, d->bar1 + 0x0f14);
 
     dev_info(&d->pdev->dev, "CPR write addr=0x0 val=0x%08x\n", local_20);
     ret = cpr_write(d, 0, local_20);
@@ -240,7 +160,7 @@ static int codec_initialize_memory(struct c985_poc *d)
     dev_info(&d->pdev->dev, "Row detect result: read=0x%08x local_1c=%u local_20=0x%08x\n",
              local_24, local_1c, local_20);
     dev_info(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
-    c985_wr(d, 0x0f14, local_20);
+    writel(local_20, d->bar1 + 0x0f14);
 
     /* Column address detection */
     dev_info(&d->pdev->dev, "=== COLUMN ADDRESS DETECTION ===\n");
@@ -278,33 +198,62 @@ static int codec_initialize_memory(struct c985_poc *d)
     dev_info(&d->pdev->dev, "Col detect result: read=0x%08x local_18=%u local_20=0x%08x\n",
              local_24, local_18, local_20);
     dev_info(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
-    c985_wr(d, 0x0f14, local_20);
+    writel(local_20, d->bar1 + 0x0f14);
 
     /* Final register configuration */
     dev_info(&d->pdev->dev, "=== FINAL REGISTER CONFIG ===\n");
-    local_28 = c985_rd(d, 0x0f1c);
+    local_28 = readl(d->bar1 + 0x0f1c);
     dev_info(&d->pdev->dev, "Read 0xf1c = 0x%08x\n", local_28);
     dev_info(&d->pdev->dev, "Writing 0xf1c = 0x%08x\n", local_28 & 0xfffffcff);
-    c985_wr(d, 0x0f1c, local_28 & 0xfffffcff);
+    writel(local_28 & 0xfffffcff, d->bar1 + 0x0f1c);
 
     dev_info(&d->pdev->dev, "Writing memory controller registers:\n");
     dev_info(&d->pdev->dev, "  0xf04 = 0x0d03110b\n");
-    c985_wr(d, 0x0f04, 0x0d03110b);
+    writel(0x0d03110b, d->bar1 + 0x0f04);
 
     dev_info(&d->pdev->dev, "  0xf08 = 0x00000003\n");
-    c985_wr(d, 0x0f08, 3);
+    writel(0x00000003, d->bar1 + 0x0f08);
 
     dev_info(&d->pdev->dev, "  0xf40 = 0x00000002\n");
-    c985_wr(d, 0x0f40, 2);
+    writel(0x00000002, d->bar1 + 0x0f40);
 
     dev_info(&d->pdev->dev, "  0xf10 = 0x05140080\n");
-    c985_wr(d, 0x0f10, 0x05140080);
+    writel(0x05140080, d->bar1 + 0x0f10);
 
     dev_info(&d->pdev->dev, "  0xf18 = 0x00000001\n");
-    c985_wr(d, 0x0f18, 1);
+    writel(0x00000001, d->bar1 + 0x0f18);
 
     dev_info(&d->pdev->dev, "Waiting 100ms for memory stabilization...\n");
     msleep(100);
+
+    /* CPR verification */
+    dev_info(&d->pdev->dev, "=== CPR CHECK: AFTER MEMORY INIT ===\n");
+    {
+        u32 test_val;
+        cpr_write(d, 0, 0xAAAAAAAA);
+        cpr_read(d, 0, &test_val);
+        dev_info(&d->pdev->dev,
+                 "CPR[0x0] = 0x%08x (expect 0xAAAAAAAA) %s\n",
+                 test_val, test_val == 0xAAAAAAAA ? "OK" : "FAIL");
+
+        cpr_write(d, 0x1000, 0x55555555);
+        cpr_read(d, 0x1000, &test_val);
+        dev_info(&d->pdev->dev,
+                 "CPR[0x1000] = 0x%08x (expect 0x55555555) %s\n",
+                 test_val, test_val == 0x55555555 ? "OK" : "FAIL");
+
+        dev_info(&d->pdev->dev,
+                 "MEMCTL: 0xf04=0x%08x 0xf08=0x%08x 0xf10=0x%08x\n",
+                 readl(d->bar1 + 0xf04),
+                 readl(d->bar1 + 0xf08),
+                 readl(d->bar1 + 0xf10));
+        dev_info(&d->pdev->dev,
+                 "MEMCTL: 0xf14=0x%08x 0xf18=0x%08x 0xf1c=0x%08x 0xf40=0x%08x\n",
+                 readl(d->bar1 + 0xf14),
+                 readl(d->bar1 + 0xf18),
+                 readl(d->bar1 + 0xf1c),
+                 readl(d->bar1 + 0xf40));
+    }
 
     dev_info(&d->pdev->dev, "=== MEMORY INIT COMPLETE ===\n");
     return 0;
@@ -369,97 +318,6 @@ void cqlcodec_load_default_settings(struct c985_poc *d)
 }
 
 /* -----------------------------------------------------------------------
- * Interrupt handler
- * --------------------------------------------------------------------- */
-static irqreturn_t cqlcodec_interrupt_handler(int irq, void *dev_id)
-{
-    struct c985_poc *d = dev_id;
-    u32 pci_status, hci_status;
-    int handled = 0;
-
-    /* Read interrupt status */
-    pci_status = readl(d->bar1 + 0x4030);
-    hci_status = readl(d->bar1 + 0x804);
-
-    /* Not our interrupt if nothing set */
-    if (!pci_status && !hci_status)
-        return IRQ_NONE;
-
-    /* Clear PCI status IMMEDIATELY by writing back same value */
-    if (pci_status) {
-        writel(pci_status, d->bar1 + 0x4030);
-        handled = 1;
-    }
-
-    /* Clear HCI status */
-    if (hci_status) {
-        writel(hci_status, d->bar1 + 0x804);
-        handled = 1;
-    }
-
-    /* Only log occasionally to avoid spam */
-    if (printk_ratelimit() && (hci_status & 0x70000))
-        dev_info(&d->pdev->dev,
-                 "IRQ: pci=0x%08x hci=0x%08x\n",
-                 pci_status, hci_status);
-
-        /* Process HCI message interrupt (bit 16) */
-        if (hci_status & BIT(16)) {
-            u32 msg_status = readl(d->bar1 + 0x6C8);
-
-            if (msg_status) {
-                u8 cmd = msg_status & 0xFF;
-                u32 p1 = readl(d->bar1 + 0x6B4);
-                u32 p2 = readl(d->bar1 + 0x6B8);
-                u32 p3 = readl(d->bar1 + 0x6BC);
-                u32 p4 = readl(d->bar1 + 0x6C0);
-                u32 p5 = readl(d->bar1 + 0x6C4);
-
-                dev_info(&d->pdev->dev,
-                         "IRQ: cmd=0x%02x p1=0x%08x p2=0x%08x\n",
-                         cmd, p1, p2);
-
-                if (cmd == 0x40)
-                    encoder_parse_arm_message(d, cmd, p1, p2, p3, p4, p5);
-
-                /* ACK ARM message */
-                writel(0, d->bar1 + 0x6C8);
-            }
-        }
-
-        /* DMA interrupts */
-        if (hci_status & BIT(17))
-            pciecntl_dma_read_done(d);
-    if (hci_status & BIT(18))
-        pciecntl_dma_write_done(d);
-
-    return handled ? IRQ_HANDLED : IRQ_NONE;
-}
-
-/* -----------------------------------------------------------------------
- * Register ISR
- * --------------------------------------------------------------------- */
-int cqlcodec_register_isr(struct c985_poc *d)
-{
-    int ret;
-
-    dev_info(&d->pdev->dev, "CQLCodec: register ISR\n");
-
-    ret = request_irq(d->pdev->irq, cqlcodec_interrupt_handler,
-                      IRQF_SHARED, DRV_NAME, d);
-    if (ret) {
-        dev_err(&d->pdev->dev, "Failed to register IRQ %d: %d\n",
-                d->pdev->irq, ret);
-        d->irq_registered = 0;
-        return ret;
-    }
-
-    d->irq_registered = 1;
-    dev_info(&d->pdev->dev, "CQLCodec: IRQ %d registered\n", d->pdev->irq);
-    return 0;
-}
-
-/* -----------------------------------------------------------------------
  * GPIO defaults
  * --------------------------------------------------------------------- */
 static void gpio_set_defaults(struct c985_poc *d)
@@ -484,28 +342,14 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
 
     pci_set_master(pdev);
 
-    /* Check if device needs reset (stuck from previous load) */
-    {
-        void __iomem *bar_test = pci_ioremap_bar(pdev, C985_BAR_MMIO);
-        if (bar_test) {
-            u32 status = readl(bar_test + 0x4030);
-            if (status == 0x7fffffff || status == 0xffffffff) {
-                dev_warn(&pdev->dev, "Device stuck (0x4030=0x%08x), forcing PCI reset\n", status);
-                iounmap(bar_test);
-                pci_reset_function(pdev);
-                msleep(100);
-                /* Re-enable after reset */
-                pcim_enable_device(pdev);
-                pci_set_master(pdev);
-            } else {
-                iounmap(bar_test);
-            }
-        }
-    }
-
-    ret = pci_request_region(pdev, C985_BAR_MMIO, DRV_NAME);
+    /* Request both BARs */
+    ret = pci_request_region(pdev, 0, DRV_NAME);  /* BAR0 - DMA engines */
     if (ret)
         return ret;
+
+    ret = pci_request_region(pdev, C985_BAR_MMIO, DRV_NAME);  /* BAR1 - registers */
+    if (ret)
+        goto err_bar0;
 
     d = devm_kzalloc(&pdev->dev, sizeof(*d), GFP_KERNEL);
     if (!d) {
@@ -514,97 +358,103 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
     }
 
     d->pdev = pdev;
-    d->bar1 = pci_ioremap_bar(pdev, C985_BAR_MMIO);
-    if (!d->bar1) {
+
+    /* Map BAR0 - DMA engine registers (PED_BAR0_REGISTERS) */
+    d->bar0 = pci_ioremap_bar(pdev, 0);
+    if (!d->bar0) {
         ret = -ENOMEM;
         goto err_region;
     }
 
+    /* Map BAR1 - chip registers */
+    d->bar1 = pci_ioremap_bar(pdev, C985_BAR_MMIO);
+    if (!d->bar1) {
+        ret = -ENOMEM;
+        goto err_bar1;
+    }
+
     pci_set_drvdata(pdev, d);
 
-    d->chip_ver = c985_rd(d, REG_CHIP_VER);
-    dev_info(&pdev->dev, "chip_ver=0x%08x\n", d->chip_ver);
+    dev_info(&pdev->dev, "=== FIRST REGISTER READ ===\n");
+    dev_info(&pdev->dev, "reg 0x00 = 0x%08x\n", readl(d->bar1 + 0x00));
+    dev_info(&pdev->dev, "reg 0xf14 = 0x%08x\n", readl(d->bar1 + 0x0f14));
+    dev_info(&pdev->dev, "reg 0xf18 = 0x%08x\n", readl(d->bar1 + 0x0f18));
+    dev_info(&pdev->dev, "reg 0xf1c = 0x%08x\n", readl(d->bar1 + 0x0f1c));
 
-    dump_full_state(d, "INITIAL");
-
+    /* Load default settings */
     cqlcodec_load_default_settings(d);
 
-    /* NOTE: Do NOT call codec_initialize_memory() here.
-     * It will be called by cqlcodec_fw_download() after
-     * arm_reset(0) and qphci_reinit() in the correct order. */
+    /* Step 1: QPHCI_Init - includes PowerUp, memory windows, etc */
+    ret = qphci_init(d);
+    if (ret)
+        goto err_out;
 
+    /* Step 2: CQLCodec_InitializeMemory */
+    ret = codec_initialize_memory(d);
+    if (ret)
+        goto err_out;
+
+    /* Step 3: QPHCI_InitArmLoop - write branch-to-self at reset vector */
     ret = qphci_init_arm_loop(d);
     if (ret)
         goto err_out;
 
+    /* Step 4: SetGPIODefaults */
     gpio_set_defaults(d);
 
-    ret = cqlcodec_register_isr(d);
-    if (ret)
+    /* Step 5: Register ISR */
+    ret = pci_interrupt_service_register(d);
+    if (ret) {
         dev_warn(&pdev->dev, "ISR registration failed\n");
-
-    {
-        u32 status = c985_rd(d, REG_PCI_INT_STATUS);
-        c985_wr(d, REG_PCI_INT_STATUS, status | 0x70000);
-        dev_info(&pdev->dev, "cleared pending IRQ status=0x%08x\n", status);
+        goto err_out;
     }
 
+    /* Enable interrupts */
+    cpciectl_enable_interrupts(d);
+
+    /* Step 6: AO/VO switches */
     cqlcodec_ao_switch(d, !d->ao_enable);
     cqlcodec_vo_switch(d, !d->vo_enable);
 
-    /* Enable PCI interrupts */
-    c985_wr(d, 0x4000, c985_rd(d, 0x4000) | 1);
-
-    /* Enable HCI interrupts: message(16), DMA read(17), DMA write(18) */
-    c985_wr(d, 0x800, 0x00070000);
-
-    /* Clear any pending HCI status */
-    c985_wr(d, 0x804, 0x00070000);
-
-    /* Debug: verify interrupt setup */
-    dev_info(&pdev->dev, "INT setup: 0x4000=0x%08x 0x4030=0x%08x 0x800=0x%08x 0x804=0x%08x\n",
-             readl(d->bar1 + 0x4000),
-             readl(d->bar1 + 0x4030),
-             readl(d->bar1 + 0x800),
-             readl(d->bar1 + 0x804));
-
-    return 0;  // ← ADD THIS!
+    dev_info(&pdev->dev, "CQLCodec init complete\n");
+    return 0;
 
     err_out:
     if (d->irq_registered)
         free_irq(d->pdev->irq, d);
-    if (d->bar1)
-        iounmap(d->bar1);
+    iounmap(d->bar1);
+    err_bar1:
+    iounmap(d->bar0);
     err_region:
     pci_release_region(pdev, C985_BAR_MMIO);
+    err_bar0:
+    pci_release_region(pdev, 0);
     return ret;
 }
-
 /* -----------------------------------------------------------------------
  * Device remove
  * --------------------------------------------------------------------- */
 void cqlcodec_remove_device(struct pci_dev *pdev)
 {
     struct c985_poc *d = pci_get_drvdata(pdev);
-    u32 val, reg0;
-    unsigned long timeout;
-    u16 pci_cmd;
 
     dev_info(&pdev->dev, "cqlcodec_remove_device()\n");
 
     if (!d)
         return;
 
-    if (d->bar1) {
-        /* 1. Disable interrupts at PCI level first */
-        pci_read_config_word(pdev, PCI_COMMAND, &pci_cmd);
-        pci_write_config_word(pdev, PCI_COMMAND, pci_cmd & ~PCI_COMMAND_INTX_DISABLE);
+    if (d->bar0) {
+        /* Disable interrupt generation */
+        u32 val = readl(d->bar0 + PED_DMA_COMMON_CONTROL_STATUS);
+        writel(val & ~PED_GLOBAL_INT_ENABLE, d->bar0 + PED_DMA_COMMON_CONTROL_STATUS);
+    }
 
-        /* Clear and disable all device interrupts */
-        val = readl(d->bar1 + 0x4000);
-        writel(0, d->bar1 + 0x4000);  /* Disable all */
-        writel(0xFFFFFFFF, d->bar1 + 0x4030);  /* Try to clear all status */
-        writel(0xFFFFFFFF, d->bar1 + 0x804);   /* Clear HCI status */
+    if (d->bar1) {
+        /* Clear pending status */
+        writel(readl(d->bar1 + REG_PCI_INT_STATUS), d->bar1 + REG_PCI_INT_STATUS);
+        writel(0x00070000, d->bar1 + 0x804);
+        writel(0, d->bar1 + 0x6C8);
+        writel(0, d->bar1 + 0x6CC);
     }
 
     if (d->irq_registered) {
@@ -612,75 +462,21 @@ void cqlcodec_remove_device(struct pci_dev *pdev)
         d->irq_registered = 0;
     }
 
-
     if (d->bar1) {
-        /* 2. CQLCodec_PowerDown sequence */
-        dev_info(&pdev->dev, "CQLCodec_PowerDown sequence\n");
-
-        /* Disable ARM via HCI */
-        writel(0x00000000, d->bar1 + 0x80C);
-
-        /* Clear mailbox */
-        writel(0x00000000, d->bar1 + 0x6CC);
-        writel(0x00000000, d->bar1 + 0x6C8);
-
-        /* Read reg 0, preserve top 3 bits, apply reset */
-        reg0 = readl(d->bar1 + 0x00);
-        writel(reg0 & 0xE0000000, d->bar1 + 0x00);
-        writel((reg0 & 0xE0000000) | 0x1FFFFFF, d->bar1 + 0x00);
-
-        /* 3. QPHCI_PowerDown sequence */
-        dev_info(&pdev->dev, "QPHCI_PowerDown sequence\n");
-
-        /* DDR into power-down/reset mode - THIS IS CRITICAL */
-        writel(0x00000004, d->bar1 + 0x0f1c);
-
-        /* Pad control - tri-state */
-        val = readl(d->bar1 + 0x50);
-        writel(val | 0x106, d->bar1 + 0x50);
-        dev_info(&pdev->dev, "Pad control: 0x%08x -> 0x%08x\n", val, val | 0x106);
-
-        /* Final control register reset */
-        writel(0x00000000, d->bar1 + 0x00);
-        writel(0x01FFFFFF, d->bar1 + 0x00);
-
-        msleep(10);
-
-        /* 4. Now do ARM halt sequence */
-        dev_info(&pdev->dev, "ARM halt\n");
-        writel(0x00000000, d->bar1 + 0x80C);
-        writel(0x00000001, d->bar1 + 0x800);
-        writel(0x00000001, d->bar1 + 0x10);
-        {
-            u32 ts = readl(d->bar1 + 0x1C);
-            writel(ts + 0xFFFF, d->bar1 + 0x18);
-        }
-        writel(0x00000108, d->bar1 + 0x10);
-        msleep(15);
-
-        timeout = jiffies + msecs_to_jiffies(3000);
-        while (readl(d->bar1 + 0x800) != 0) {
-            if (time_after(jiffies, timeout)) {
-                dev_err(&pdev->dev, "ARM reset timeout\n");
-                break;
-            }
-            udelay(10);
-        }
-        writel(0x00000000, d->bar1 + 0x10);
-
-        /* 5. Final interrupt status clear before unmap */
-        writel(0x7FFFFFFF, d->bar1 + 0x4030);
-        writel(0x00070000, d->bar1 + 0x804);
-
-        dev_info(&pdev->dev, "hardware shutdown complete\n");
         iounmap(d->bar1);
         d->bar1 = NULL;
     }
 
-    pci_release_region(pdev, C985_BAR_MMIO);
+    if (d->bar0) {
+        iounmap(d->bar0);
+        d->bar0 = NULL;
+    }
 
-    /* Force PCI device reset so next load starts clean */
-    pci_reset_function(pdev);
+    pci_release_region(pdev, C985_BAR_MMIO);
+    pci_release_region(pdev, 0);
+
+    dev_info(&pdev->dev, "hardware shutdown complete\n");
+
 }
 /* -----------------------------------------------------------------------
  * Firmware download — CORRECTED
@@ -710,7 +506,7 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
     u32 qpsos_version = 0;
     u32 reg_base;
     u32 sz4, i, word;
-    u32 test_val;
+    u32 reg0;
     int ret;
 
     dev_info(&d->pdev->dev,
@@ -736,128 +532,66 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
     dev_info(&d->pdev->dev, "FW audio: %zu bytes\n", fw_aud->size);
 
     if (do_reset) {
-        /* Step 1: ARM reset (halt) */
-        dev_info(&d->pdev->dev, "STEP: ARM reset\n");
-        ret = arm_reset(d, 0);
+        /* Step 1: ResetArm(0) - halt ARM */
+        ret = dm_reset_arm(d, 0);
         if (ret)
             goto out;
 
-        /* Step 2: QPHCI_PowerUp sequence - restore from power-down state */
-        dev_info(&d->pdev->dev, "STEP: Power-up sequence\n");
-        {
-            u32 pad_ctl = c985_rd(d, 0x50);
-            dev_info(&d->pdev->dev, "Pad control before: 0x%08x\n", pad_ctl);
-            pad_ctl &= 0xFFFFFEFF;  /* Clear bit 8 */
-            c985_wr(d, 0x50, pad_ctl);
-            dev_info(&d->pdev->dev, "Pad control after:  0x%08x\n", pad_ctl);
-        }
-
-        /* Restore DDR controller to power-on default BEFORE memory init */
-        dev_info(&d->pdev->dev, "DDR 0xf1c = 0x00000f00 (power-on default)\n");
-        c985_wr(d, 0x0f1c, 0x00000f00);
-
-        /* ADD: Force DDR controller full reset sequence */
-        c985_wr(d, 0x0f14, 0x00020007);  /* Default row/col config */
-        c985_wr(d, 0x0f04, 0x00000000);  /* Clear timing */
-        c985_wr(d, 0x0f08, 0x00000000);  /* Clear config */
-        c985_wr(d, 0x0f10, 0x00000000);  /* Clear control */
-        c985_wr(d, 0x0f18, 0x00000000);  /* Clear enable */
-        c985_wr(d, 0x0f40, 0x00000000);  /* Clear extra */
-        msleep(10);
-
-        /* Step 3: QPHCI reinit */
-
-        /* Step 3: QPHCI reinit */
-        dev_info(&d->pdev->dev, "STEP: QPHCI reinit\n");
+        /* Step 2: QPHCI_ReInit */
         ret = qphci_reinit(d);
         if (ret)
             goto out;
 
-        /* Step 4: Memory init */
-        dev_info(&d->pdev->dev, "STEP: Memory init\n");
+        /* Step 3: InitializeMemory */
         ret = codec_initialize_memory(d);
         if (ret)
             goto out;
 
-        /* Verify CPR is working after memory init */
-        dev_info(&d->pdev->dev, "=== CPR CHECK: AFTER MEMORY INIT ===\n");
-        cpr_write(d, 0, 0xAAAAAAAA);
-        cpr_read(d, 0, &test_val);
-        dev_info(&d->pdev->dev,
-                 "CPR[0x0] = 0x%08x (expect 0xAAAAAAAA) %s\n",
-                 test_val, test_val == 0xAAAAAAAA ? "OK" : "FAIL");
-
-        cpr_write(d, 0x1000, 0x55555555);
-        cpr_read(d, 0x1000, &test_val);
-        dev_info(&d->pdev->dev,
-                 "CPR[0x1000] = 0x%08x (expect 0x55555555) %s\n",
-                 test_val, test_val == 0x55555555 ? "OK" : "FAIL");
-
-        /* Dump memory controller state */
-        dev_info(&d->pdev->dev,
-                 "MEMCTL: 0xf04=0x%08x 0xf08=0x%08x 0xf10=0x%08x\n",
-                 readl(d->bar1 + 0xf04),
-                 readl(d->bar1 + 0xf08),
-                 readl(d->bar1 + 0xf10));
-        dev_info(&d->pdev->dev,
-                 "MEMCTL: 0xf14=0x%08x 0xf18=0x%08x 0xf1c=0x%08x 0xf40=0x%08x\n",
-                 readl(d->bar1 + 0xf14),
-                 readl(d->bar1 + 0xf18),
-                 readl(d->bar1 + 0xf1c),
-                 readl(d->bar1 + 0xf40));
-
-        /* Step 5: AO/VO and GPIO setup */
+        /* Step 4-6: AO/VO/GPIO */
         cqlcodec_ao_switch(d, !d->ao_enable);
         cqlcodec_vo_switch(d, !d->vo_enable);
         gpio_set_defaults(d);
 
+        /* Step 7: 50ms delay */
         msleep(50);
+
+        /* Step 8-9: Read reg 0, clear bit 13, write back */
+        reg0 = readl(d->bar1 + 0x00);
+        writel(reg0 & 0xFFFFDFFF, d->bar1 + 0x00);
+
+        /* Step 10: 1us delay */
+        udelay(1);
     }
 
-    /* Audio FW prep - clear bit 13 of reg 0x00 */
-    if (do_reset) {
-        u32 reg0 = c985_rd(d, 0x00);
-        c985_wr(d, 0x00, reg0 & ~BIT(13));
-        msleep(1);
-    }
-
-    /* Upload AUDIO FW */
-    dev_info(&d->pdev->dev,
-             "=== UPLOAD AUDIO FW @ 0x%08x ===\n",
-             CARD_RAM_AUDIO_BASE);
+    /* Step 11: Upload AUDIO FW @ 0x100000 */
+    dev_info(&d->pdev->dev, "=== UPLOAD AUDIO FW @ 0x%08x ===\n", CARD_RAM_AUDIO_BASE);
     sz4 = ALIGN(fw_aud->size, 4);
     for (i = 0; i < sz4; i += 4) {
         word = 0;
         if (i < fw_aud->size)
-            memcpy(&word, fw_aud->data + i,
-                   min_t(u32, 4, fw_aud->size - i));
-            word = le32_to_cpu(word);
+            memcpy(&word, fw_aud->data + i, min_t(u32, 4, fw_aud->size - i));
+        word = le32_to_cpu(word);
         ret = cpr_write(d, CARD_RAM_AUDIO_BASE + i, word);
         if (ret) {
-            dev_err(&d->pdev->dev,
-                    "AUDIO CPR write failed at 0x%x\n", i);
+            dev_err(&d->pdev->dev, "AUDIO CPR write failed at 0x%x\n", i);
             goto out;
         }
     }
 
+    /* Step 12: 1ms delay */
     msleep(1);
 
-    /* QPSOS from FW buffer */
+    /* Video FW setup - QPSOS version detection */
     if (fw_vid->size > 0x108) {
         u32 sig;
-
         memcpy(&sig, fw_vid->data + 0x100, 4);
         sig = le32_to_cpu(sig);
-        dev_info(&d->pdev->dev,
-                 "QPSOS sig from FW buffer = 0x%08x\n", sig);
+        dev_info(&d->pdev->dev, "QPSOS sig from FW buffer = 0x%08x\n", sig);
         if (sig == 0x534f5351) {
             u16 ver;
-
             memcpy(&ver, fw_vid->data + 0x106, 2);
-            ver = le16_to_cpu(ver);
-            qpsos_version = ver;
-            dev_info(&d->pdev->dev,
-                     "QPSOS version=%u\n", qpsos_version);
+            qpsos_version = le16_to_cpu(ver);
+            dev_info(&d->pdev->dev, "QPSOS version=%u\n", qpsos_version);
         }
     }
 
@@ -869,31 +603,26 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
     cpr_write(d, reg_base + 4, 0);
 
     /* PLL setup */
-    dev_info(&d->pdev->dev,
-             "PLL setup: chip_ver=0x%08x\n", d->chip_ver);
+    dev_info(&d->pdev->dev, "PLL setup: chip_ver=0x%08x\n", d->chip_ver);
     if (d->chip_ver == 0x10020)
-        c985_wr(d, PLL4_REG, PLL4_VAL_10020);
-    else
-        c985_wr(d, PLL4_REG, 0x20236);
-    c985_wr(d, PLL5_REG, PLL5_VAL_DEFAULT);
+        writel(0x00030130, d->bar1 + 0xC8);  /* PLL4 */
+        else
+            writel(0x00020236, d->bar1 + 0xC8);
+    writel(0x00010239, d->bar1 + 0xCC);      /* PLL5 */
 
-    c985_wr(d, 0x6CC, 0);
+    writel(0, d->bar1 + 0x6CC);
 
-    /* Upload VIDEO FW */
-    dev_info(&d->pdev->dev,
-             "=== UPLOAD VIDEO FW @ 0x%08x ===\n",
-             CARD_RAM_VIDEO_BASE);
+    /* Step 13: Upload VIDEO FW @ 0x000000 */
+    dev_info(&d->pdev->dev, "=== UPLOAD VIDEO FW @ 0x%08x ===\n", CARD_RAM_VIDEO_BASE);
     sz4 = ALIGN(fw_vid->size, 4);
     for (i = 0; i < sz4; i += 4) {
         word = 0;
         if (i < fw_vid->size)
-            memcpy(&word, fw_vid->data + i,
-                   min_t(u32, 4, fw_vid->size - i));
-            word = le32_to_cpu(word);
+            memcpy(&word, fw_vid->data + i, min_t(u32, 4, fw_vid->size - i));
+        word = le32_to_cpu(word);
         ret = cpr_write(d, CARD_RAM_VIDEO_BASE + i, word);
         if (ret) {
-            dev_err(&d->pdev->dev,
-                    "VIDEO CPR write failed at 0x%x\n", i);
+            dev_err(&d->pdev->dev, "VIDEO CPR write failed at 0x%x\n", i);
             goto out;
         }
     }
@@ -910,9 +639,8 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
             cpr_read(d, CARD_RAM_VIDEO_BASE + j, &card_val);
             host_val = 0;
             if (j < fw_vid->size)
-                memcpy(&host_val, fw_vid->data + j,
-                       min_t(size_t, 4, fw_vid->size - j));
-                host_val = le32_to_cpu(host_val);
+                memcpy(&host_val, fw_vid->data + j, min_t(size_t, 4, fw_vid->size - j));
+            host_val = le32_to_cpu(host_val);
 
             if (card_val != host_val) {
                 dev_info(&d->pdev->dev,
@@ -931,9 +659,8 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
             cpr_read(d, CARD_RAM_AUDIO_BASE + j, &card_val);
             host_val = 0;
             if (j < fw_aud->size)
-                memcpy(&host_val, fw_aud->data + j,
-                       min_t(size_t, 4, fw_aud->size - j));
-                host_val = le32_to_cpu(host_val);
+                memcpy(&host_val, fw_aud->data + j, min_t(size_t, 4, fw_aud->size - j));
+            host_val = le32_to_cpu(host_val);
 
             if (card_val != host_val) {
                 dev_info(&d->pdev->dev,
@@ -947,27 +674,70 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
             }
         }
 
-        dev_info(&d->pdev->dev,
-                 "FW verify: %d mismatches\n", mismatches);
+        dev_info(&d->pdev->dev, "FW verify: %d mismatches\n", mismatches);
     }
 
     dump_full_state(d, "AFTER-FW-UPLOAD");
 
     if (do_reset) {
-        /* Start ARM */
-        ret = arm_reset(d, 1);
+        /* Step 14: 500us delay */
+        udelay(500);
+
+        /* Step 15: ResetArm(1) - start ARM */
+        ret = dm_reset_arm(d, 1);
         if (ret)
             goto out;
 
+        dev_info(&d->pdev->dev, "BAR0[0x4000]=0x%08x BAR0[0x8030]=0x%08x\n",
+                 readl(d->bar0 + 0x4000), readl(d->bar0 + 0x8030));
+        /* Step 16: 150ms delay */
         msleep(150);
+
         dump_full_state(d, "POST-ARM-BOOT");
+        cpciectl_enable_interrupts(d);
+        dev_info(&d->pdev->dev, "Interrupts re-enabled: BAR0[0x4000]=0x%08x\n",
+                 readl(d->bar0 + 0x4000));
     }
 
-    out:
-    if (fw_vid)
-        release_firmware(fw_vid);
-    if (fw_aud)
-        release_firmware(fw_aud);
+    dev_info(&d->pdev->dev, "FW download complete\n");
 
+    out:
+    release_firmware(fw_vid);
+    release_firmware(fw_aud);
     return ret;
 }
+
+static int cqlcodec_reset(struct c985_poc *d)
+{
+    int ret;
+
+    dev_info(&d->pdev->dev, "CQLCodec_Reset()\n");
+
+    /* 1-2. Clear mailboxes */
+    writel(0, d->bar1 + 0x6CC);
+    writel(0, d->bar1 + 0x6C8);
+
+    /* 3. Skip AllocEncodeTask(0) for now */
+
+    /* 4. QPHCI_ReInit */
+    ret = qphci_reinit(d);
+    if (ret)
+        return ret;
+
+    /* 5. InitializeMemory - but DDR should already be up! */
+    /* Skip on reload, only needed on fresh boot */
+
+    /* 6-8. AO/VO/GPIO */
+    cqlcodec_ao_switch(d, !d->ao_enable);
+    cqlcodec_vo_switch(d, !d->vo_enable);
+    writel(0, d->bar1 + REG_GPIO_DIR);
+    writel(0, d->bar1 + REG_GPIO_VAL);
+
+    /* 9. Delay */
+    msleep(5);
+
+    /* 10. Skip AllocEncodeTask(1) for now */
+
+    return 0;
+}
+
