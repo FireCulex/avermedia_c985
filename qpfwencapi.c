@@ -195,11 +195,19 @@ int qpfwencapi_set_viu_sync_code(struct c985_poc *d, u32 task_id,
 int qpfwencapi_update_config(struct c985_poc *d, u32 task_id)
 {
     u32 message;
+    int ret;
 
     dev_info(&d->pdev->dev, "ENC: UpdateConfig task=%u\n", task_id);
 
+    ret = qpfwapi_mailbox_ready(d, 500);  /* ADD THIS */
+    if (ret)
+        return ret;
+
     message = (task_id << 16) | 6;
-    return qpfwapi_send_message(d, task_id, message);
+    ret = qpfwapi_send_message(d, task_id, message);
+
+    qpfwapi_mailbox_done(d);  /* ADD THIS */
+    return ret;
 }
 
 /* -----------------------------------------------------------------------
@@ -209,11 +217,19 @@ int qpfwencapi_update_config(struct c985_poc *d, u32 task_id)
 static int qpfwencapi_start_encoder(struct c985_poc *d, u32 task_id)
 {
     u32 message;
+    int ret;
 
     dev_info(&d->pdev->dev, "ENC: StartEncoder task=%u\n", task_id);
 
+    ret = qpfwapi_mailbox_ready(d, 500);  /* ADD THIS */
+    if (ret)
+        return ret;
+
     message = (task_id << 16) | 1;
-    return qpfwapi_send_message(d, task_id, message);
+    ret = qpfwapi_send_message(d, task_id, message);
+
+    qpfwapi_mailbox_done(d);  /* ADD THIS */
+    return ret;
 }
 
 /* -----------------------------------------------------------------------
@@ -231,12 +247,22 @@ int qpfwencapi_stop(struct c985_poc *d)
     if (ret)
         return ret;
 
-    writel(0, d->bar1 + 0x6F8);  /* bStopAtGOP = 0 */
+    writel(0, d->bar1 + 0x6F8);
 
     message = (0 << 16) | 2;
     ret = qpfwapi_send_message(d, 0, message);
 
     qpfwapi_mailbox_done(d);
+
+    /* Wait for ARM to actually stop */
+    msleep(200);
+
+    /* Debug: check state after stop */
+    dev_info(&d->pdev->dev, "ENC: post-stop 0x6CC=0x%08x 0x6C8=0x%08x 0x24=0x%08x\n",
+             readl(d->bar1 + 0x6CC),
+             readl(d->bar1 + 0x6C8),
+             readl(d->bar1 + 0x24));
+
     return ret;
 }
 
