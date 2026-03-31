@@ -60,6 +60,19 @@ struct c985_poc;
 
 #define REG_PCI_INT_STATUS  0x4030
 
+/* DM interrupt types for DM_ClearInterrupt() */
+#define DM_INT_ARM_MSG      0x01    /* ARM message interrupt */
+#define DM_INT_DMA_WRITE    0x02    /* DMA write complete */
+#define DM_INT_DMA_READ     0x04    /* DMA read complete */
+
+
+/* ARM response data */
+#define REG_ARM_RESP_DATA       0x6CC
+#define HOST_TO_ARM_TRIGGER     0x2000000
+/* Host to ARM trigger (write 0x2000000 to signal ARM) */
+#define REG_HOST_TO_ARM_TRIG    0x24
+/* PCI interrupt status - read to check pending interrupts */
+#define REG_INT_STATUS          0x30
 
 /* Public API */
 int  cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id);
@@ -70,4 +83,11 @@ void cqlcodec_vo_switch(struct c985_poc *d, int disable);
 void cqlcodec_load_default_settings(struct c985_poc *d);
 int  cqlcodec_register_isr(struct c985_poc *d);
 int cqlcodec_fw_download(struct c985_poc *d, int do_reset);
+int dm_clear_interrupt(struct c985_poc *d, u32 int_mask);
+
+
+
+
+
+
 #endif
