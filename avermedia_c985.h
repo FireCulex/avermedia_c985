@@ -63,6 +63,8 @@ struct c985_poc {
     unsigned int width;
     unsigned int height;
     unsigned int sequence;
+
+    int hdmi_signal_cached;
 };
 
 /* BAR indices */
