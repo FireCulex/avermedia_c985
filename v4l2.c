@@ -66,7 +66,6 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
     if (ret) {
         dev_err(&d->pdev->dev, "encoder start failed: %d\n", ret);
 
-        /* Return all buffers on failure to avoid vb2 WARN */
         spin_lock_irqsave(&d->buf_lock, flags);
         list_for_each_entry_safe(buf, tmp, &d->buf_list, list) {
             list_del(&buf->list);
@@ -76,71 +75,7 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
         return ret;
     }
 
-
-    /* Add after encoder start in c985_start_streaming */
-    dev_info(&d->pdev->dev, "=== POST-START DIAGNOSTIC ===\n");
-
-    /* Check what the ARM wrote back */
-    for (int i = 0; i < 16; i++) {
-        u32 val = readl(d->bar1 + 0x6C0 + (i * 4));
-        dev_info(&d->pdev->dev, "BAR1[0x%03x] = 0x%08x\n",
-                 0x6C0 + (i * 4), val);
-    }
-
-    /* Check HCI status */
-    dev_info(&d->pdev->dev, "HCI[0x800] = 0x%08x\n", readl(d->bar1 + 0x800));
-    dev_info(&d->pdev->dev, "HCI[0x804] = 0x%08x\n", readl(d->bar1 + 0x804));
-    dev_info(&d->pdev->dev, "HCI[0x808] = 0x%08x\n", readl(d->bar1 + 0x808));
-    dev_info(&d->pdev->dev, "HCI[0x80C] = 0x%08x\n", readl(d->bar1 + 0x80C));
-
-    /* Check DMA registers */
-    for (int i = 0; i < 8; i++) {
-        u32 val = readl(d->bar1 + 0x810 + (i * 4));
-        dev_info(&d->pdev->dev, "DMA[0x%03x] = 0x%08x\n",
-                 0x810 + (i * 4), val);
-    }
-
-    /* Poll for a few seconds to see if ARM sends anything */
-    for (int i = 0; i < 50; i++) {
-        u32 pci_st = readl(d->bar1 + 0x4030);
-        u32 hci_st = readl(d->bar1 + 0x800);
-        u32 msg = readl(d->bar1 + 0x6C8);
-        u32 mbox = readl(d->bar1 + 0x6CC);
-
-        if ((pci_st & 0x40000000) || (hci_st & 0x70000) || msg || (mbox & 1)) {
-            dev_info(&d->pdev->dev,
-                     "POLL[%d]: pci=0x%08x hci=0x%08x msg=0x%08x mbox=0x%08x\n",
-                     i, pci_st, hci_st, msg, mbox);
-        }
-        msleep(100);
-    }
-
-    /* In c985_start_streaming, add this debug */
-    u8 buf2[64];
-    int i;
-
-
-    dev_info(&d->pdev->dev, "=== NUC100 Register Scan ===\n");
-
-    for (i = 0; i < 32; i++) {
-        u8 val;
-        if (nuc100_read_reg(d, 0x20 + i, &val) == 0) {
-            dev_info(&d->pdev->dev, "NUC[0x%02x] = 0x%02x\n",
-                     0x20 + i, val);
-        } else {
-            dev_err(&d->pdev->dev, "NUC[0x%02x] read failed\n",
-                    0x20 + i);
-            break;
-        }
-    }
-
-
-    /* Also check IT6604 if accessible via I2C */
-    dev_info(&d->pdev->dev, "=== BAR1 HDMI Status Registers ===\n");
-    for (i = 0; i < 16; i++) {
-        u32 val = readl(d->bar1 + 0x6B0 + (i * 4));
-        dev_info(&d->pdev->dev, "BAR1[0x%03x] = 0x%08x\n", 0x6B0 + (i * 4), val);
-    }
+    /* That's it - no blocking diagnostics */
     return 0;
 }
 
@@ -153,6 +88,7 @@ static void c985_stop_streaming(struct vb2_queue *vq)
     dev_info(&d->pdev->dev, "stop_streaming\n");
 
     qpfwencapi_stop(d);
+    msleep(100);
 
     spin_lock_irqsave(&d->buf_lock, flags);
     list_for_each_entry_safe(buf, tmp, &d->buf_list, list) {
@@ -160,6 +96,9 @@ static void c985_stop_streaming(struct vb2_queue *vq)
         vb2_buffer_done(&buf->vb.vb2_buf, VB2_BUF_STATE_ERROR);
     }
     spin_unlock_irqrestore(&d->buf_lock, flags);
+
+    d->sequence = 0;
+    dev_info(&d->pdev->dev, "stop_streaming complete\n");
 }
 
 static void c985_buf_queue(struct vb2_buffer *vb)
