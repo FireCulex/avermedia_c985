@@ -13,15 +13,13 @@
 #include "project.h"
 #include "v4l2.h"
 
-#define DRV_NAME "avermedia_c985_poc"
-#define DRV_DESC "AVerMedia Live Gamer HD Series (C985)"
-
 MODULE_DESCRIPTION(DRV_DESC);
 
 static int c985_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
     struct c985_poc *d;
     int ret;
+    int i;
 
     /* Fix PCI class code for proper device identification */
     pdev->class = PCI_CLASS_MULTIMEDIA_VIDEO << 8;
@@ -31,6 +29,16 @@ static int c985_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
         return ret;
 
     d = pci_get_drvdata(pdev);
+
+    /* Scan for available DMA channels (from PedDmaInit) */
+    d->num_dma_channels = 0;
+    for (i = 0; i < 64; i++) {
+        u32 caps = readl(d->bar0 + (i * 0x100));  /* PED_DMA_ENGINE.Capabilities */
+        if (caps & 0x01) {
+            d->num_dma_channels++;
+        }
+    }
+    dev_info(&pdev->dev, "Found %d DMA channels\n", d->num_dma_channels);
 
     ret = cqlcodec_fw_download(d, 1);
     if (ret)
