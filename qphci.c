@@ -178,48 +178,40 @@ int dm_reset_arm(struct c985_poc *d, int run)
     dev_info(&d->pdev->dev, "DM_ResetArm(run=%d)\n", run);
 
     if (run == 0) {
-        val = readl(d->bar1 + 0x00);
-        dev_info(&d->pdev->dev, "DM_ResetArm: reg 0x00 = 0x%08x (preserving)\n", val);
+        writel(0x00000000, d->bar1 + REG_ARM_CTRL);
+        writel(0x00000000, d->bar1 + REG_ARM_BOOT);
+        writel(0x00000001, d->bar1 + REG_ARM_STATUS);
+        writel(0x00000001, d->bar1 + REG_ARM_RESET);
 
-        /* Do NOT write 0 to reg 0x00 - it kills DDR clocks
-         * The Windows driver does this but never does rmmod/insmod */
-
-        writel(0x00000000, d->bar1 + 0x80C);
-        writel(0x00000001, d->bar1 + 0x800);
-        writel(0x00000001, d->bar1 + 0x10);
-
-        val = readl(d->bar1 + 0x1C);
+        val = readl(d->bar1 + REG_ARM_TIMER_CFG);
         val += 0xFFFF;
-        writel(val, d->bar1 + 0x18);
+        writel(val, d->bar1 + REG_ARM_TIMER_VAL);
 
-        writel(0x00000108, d->bar1 + 0x10);
+        writel(0x00000108, d->bar1 + REG_ARM_RESET);
 
         msleep(15);
 
         timeout = jiffies + msecs_to_jiffies(3000);
         do {
-            val = readl(d->bar1 + 0x800);
+            val = readl(d->bar1 + REG_ARM_STATUS);
             if (val == 0)
                 break;
             if (time_after(jiffies, timeout)) {
-                dev_err(&d->pdev->dev, "DM_ResetArm() FAILED! reg 0x800 = 0x%x\n", val);
+                dev_err(&d->pdev->dev, "DM_ResetArm() FAILED! status=0x%x\n", val);
                 return -ETIMEDOUT;
             }
             udelay(10);
         } while (1);
 
-        writel(0x00000000, d->bar1 + 0x10);
-
-        dev_info(&d->pdev->dev, "DM_ResetArm: ARM halted OK\n");
+        writel(0x00000000, d->bar1 + REG_ARM_RESET);
     }
 
-    /* Common to both halt and start */
-    writel(0x00000000, d->bar1 + 0x6CC);
+    writel(0x00000000, d->bar1 + REG_ARM_MAILBOX);
 
     if (run == 0) {
-        writel(0x00000000, d->bar1 + 0x80C);
+        writel(0x00000000, d->bar1 + REG_ARM_BOOT);
     } else {
-        writel(0x00000001, d->bar1 + 0x80C);
+        writel(0x00000001, d->bar1 + REG_ARM_BOOT);
     }
 
     dev_info(&d->pdev->dev, "DM_ResetArm(run=%d) done\n", run);

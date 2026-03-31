@@ -407,6 +407,9 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
         goto err_out;
     }
 
+    /* Enable interrupts */
+    cpciectl_enable_interrupts(d);
+
     /* Step 6: AO/VO switches */
     cqlcodec_ao_switch(d, !d->ao_enable);
     cqlcodec_vo_switch(d, !d->vo_enable);
@@ -682,10 +685,15 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
         if (ret)
             goto out;
 
+        dev_info(&d->pdev->dev, "BAR0[0x4000]=0x%08x BAR0[0x8030]=0x%08x\n",
+                 readl(d->bar0 + 0x4000), readl(d->bar0 + 0x8030));
         /* Step 16: 150ms delay */
         msleep(150);
 
         dump_full_state(d, "POST-ARM-BOOT");
+        cpciectl_enable_interrupts(d);
+        dev_info(&d->pdev->dev, "Interrupts re-enabled: BAR0[0x4000]=0x%08x\n",
+                 readl(d->bar0 + 0x4000));
     }
 
     dev_info(&d->pdev->dev, "FW download complete\n");

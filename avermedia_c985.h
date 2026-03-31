@@ -77,7 +77,7 @@ struct c985_poc {
 #define C985_BAR_MMIO       1
 
 /* Registers (BAR1 offsets) */
-#define REG_ARM_CTRL        0x0000
+
 #define REG_CLOCK_GATE      0x0010
 #define REG_WATCHDOG_SET    0x0018
 #define REG_TIMESTAMP       0x001c
@@ -94,9 +94,9 @@ struct c985_poc {
 #define REG_CPR_WR_ADDR     0x078c
 #define REG_CPR_WR_CTL      0x0790
 #define REG_CPR_WR_DATA     0x0794
-#define REG_ARM_RESET       0x0800
-#define REG_ARM_BOOT        0x080c
-#define REG_MEM_WIN_BASE    0x081c
+
+
+
 
 
 /* Bits */

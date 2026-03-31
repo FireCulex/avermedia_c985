@@ -15,28 +15,47 @@
 static irqreturn_t pci_interrupt_service(int irq, void *dev_id)
 {
     struct c985_poc *d = dev_id;
-    u32 reg;
+    u32 reg_8030;
+    u32 channel_status;
     int i;
     irqreturn_t ret = IRQ_NONE;
+    static int call_count = 0;
 
-    dev_info(&d->pdev->dev, "IRQ: num_dma_channels=%d\n", d->num_dma_channels);
+    call_count++;
+    if (call_count <= 10)
+        dev_info(&d->pdev->dev, "IRQ: handler #%d\n", call_count);
 
+    /* Check BAR0 + 0x8030, bit 30 (0x40000000) */
+    reg_8030 = readl(d->bar0 + 0x8030);
+    if (call_count <= 10)
+        dev_info(&d->pdev->dev, "IRQ: reg_8030=0x%08x\n", reg_8030);
+
+    if (reg_8030 & 0x40000000) {
+        writel(0x40000000, d->bar0 + 0x8030);
+        dev_info(&d->pdev->dev, "IRQ: BAR0[0x8030] bit30 CLEARED\n");
+        ret = IRQ_HANDLED;
+    }
+
+    /* Check per-DMA-channel status */
     for (i = 0; i < d->num_dma_channels; i++) {
         void __iomem *channel_base = d->bar0 + (i * PED_DMA_ENGINE_SIZE);
-        reg = readl(channel_base + PED_DMA_ENGINE_CONTROL_STATUS);
+        channel_status = readl(channel_base + PED_DMA_ENGINE_CONTROL_STATUS);
 
-        dev_info(&d->pdev->dev, "IRQ: ch%d reg=0x%08x\n", i, reg);
+        if (call_count <= 10)
+            dev_info(&d->pdev->dev, "IRQ: ch%d status=0x%08x\n", i, channel_status);
 
-        if ((reg & PED_INT_PENDING) && (reg & PED_INT_ENABLED)) {
-            writel(PED_INT_CLEAR, channel_base + PED_DMA_ENGINE_CONTROL_STATUS);
-            dev_info(&d->pdev->dev, "IRQ: DMA channel %d CLEARED\n", i);
+        if ((channel_status & 0x01) && (channel_status & 0x02)) {
+            writel(0x03, channel_base + PED_DMA_ENGINE_CONTROL_STATUS);
+            dev_info(&d->pdev->dev, "IRQ: DMA ch%d CLEARED\n", i);
             ret = IRQ_HANDLED;
         }
     }
 
+    if (call_count <= 10)
+        dev_info(&d->pdev->dev, "IRQ: returning %s\n", ret == IRQ_HANDLED ? "HANDLED" : "NONE");
+
     return ret;
 }
-
 /*
  * cpciectl_enable_interrupts
  *
