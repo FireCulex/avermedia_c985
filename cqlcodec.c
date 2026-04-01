@@ -335,6 +335,30 @@ static void gpio_set_defaults(struct c985_poc *d)
     c985_wr(d, REG_GPIO_VAL, 0x00000000);
 }
 
+/* -----------------------------------------------------------------------
+ * DMA completion work handler
+ * --------------------------------------------------------------------- */
+static void dma_completion_handler(struct work_struct *work)
+{
+    struct c985_poc *d = container_of(work, struct c985_poc, dma_work);
+    int i;
+
+    dev_dbg(&d->pdev->dev, "DMA work: status=0x%08x\n", d->dma_interrupt_status);
+
+    /* Process each completed DMA channel */
+    for (i = 0; i < d->num_dma_channels; i++) {
+        if (d->dma_interrupt_status & (1 << i)) {
+            dev_dbg(&d->pdev->dev, "DMA channel %d (engine %d) completed\n",
+                    i, d->dma_engine_idx[i]);
+
+            /* Signal completion to any waiters */
+            complete(&d->dma_done);
+
+            /* Clear the bit */
+            d->dma_interrupt_status &= ~(1 << i);
+        }
+    }
+}
 
 /* -----------------------------------------------------------------------
  * Device init
@@ -387,6 +411,7 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
     pci_set_drvdata(pdev, d);
 
     INIT_WORK(&d->irq_work, cqlcodec_interrupt_handler);
+    INIT_WORK(&d->dma_work, dma_completion_handler);
     INIT_WORK(&d->frame_work, encoder_frame_work_handler);
     init_completion(&d->mailbox_complete);
     init_completion(&d->dma_done);
@@ -439,6 +464,7 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
 
     err_out:
     cancel_work_sync(&d->irq_work);
+    cancel_work_sync(&d->dma_work);
     cancel_work_sync(&d->frame_work);
     if (d->irq_registered)
         free_irq(d->pdev->irq, d);
@@ -622,3 +648,4 @@ static void cqlcodec_interrupt_handler(struct work_struct *work)
         dev_err(&d->pdev->dev, "HCI error interrupt\n");
     }
 }
+

@@ -15,6 +15,22 @@
 
 MODULE_DESCRIPTION(DRV_DESC);
 
+static void hci_work_handler(struct work_struct *work)
+{
+    struct c985_poc *d = container_of(work, struct c985_poc, irq_work);
+    dev_dbg(&d->pdev->dev, "HCI work handler called\n");
+    /* TODO: Process ARM messages */
+}
+
+static void dma_work_handler(struct work_struct *work)
+{
+    struct c985_poc *d = container_of(work, struct c985_poc, dma_work);
+    dev_dbg(&d->pdev->dev, "DMA work handler called, status=0x%08x\n",
+            d->dma_interrupt_status);
+    /* TODO: Process DMA completions, clear bits from dma_interrupt_status */
+    d->dma_interrupt_status = 0;
+}
+
 // CDevice::Init
 static int c985_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {

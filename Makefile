@@ -21,6 +21,7 @@ $(MODULE_NAME)-objs := \
 	pciecntl.o \
 	v4l2.o \
 	interrupts.o \
+	dma.o \
 	firmware.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build

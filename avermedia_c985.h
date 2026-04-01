@@ -97,6 +97,17 @@ struct c985_poc {
     struct completion mailbox_complete; /* Mailbox ACK wait */
 
     spinlock_t irq_lock;                /* IRQ state lock */
+
+
+    /* DMA engine tracking */
+    u32 dma_engine_idx[8];          /* Actual engine indices (e.g., 0, 32) */
+    u32 dma_interrupt_status;       /* Bitmask of pending DMA completions */
+
+    /* Work queues */
+
+    struct work_struct dma_work;    /* DMA completion processing */
+
+
 };
 
 #define DRV_NAME "avermedia_c985_poc"

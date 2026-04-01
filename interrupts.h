@@ -14,53 +14,52 @@ struct c985_poc;
  * PED_DMA_ENGINE offsets (from Ghidra: PED_DMA_ENGINE structure)
  * Each DMA engine is 0x100 bytes
  */
-#define PED_DMA_ENGINE_SIZE              0x100   /* sizeof(PED_DMA_ENGINE) */
-#define PED_DMA_ENGINE_CAPABILITIES      0x00    /* PED_DMA_ENGINE.Capabilities */
-#define PED_DMA_ENGINE_CONTROL_STATUS    0x04    /* PED_DMA_ENGINE.ControlStatus */
-#define PED_DMA_ENGINE_DESCRIPTOR        0x08    /* PED_DMA_ENGINE.Descriptor */
-#define PED_DMA_ENGINE_HARDWARE_TIME     0x10    /* PED_DMA_ENGINE.HardwareTime */
+#define PED_DMA_ENGINE_SIZE              0x100
+#define PED_DMA_ENGINE_CAPABILITIES      0x00
+#define PED_DMA_ENGINE_CONTROL_STATUS    0x04
+#define PED_DMA_ENGINE_DESCRIPTOR_LO     0x08
+#define PED_DMA_ENGINE_DESCRIPTOR_HI     0x0C
+#define PED_DMA_ENGINE_HARDWARE_TIME     0x10
+#define PED_DMA_ENGINE_CHAIN_CMPL        0x14
 
 /*
- * PED_DMA_COMMON offsets (from Ghidra: PED_BAR0_REGISTERS.Common at 0x4000)
+ * PED_DMA_COMMON offsets (at BAR0 + 0x4000)
  */
-#define PED_DMA_COMMON_BASE              0x4000  /* PED_BAR0_REGISTERS.Common */
-#define PED_DMA_COMMON_CONTROL_STATUS    0x4000  /* PED_DMA_COMMON.ControlStatus */
-#define PED_DMA_COMMON_FPGA_VERSION      0x4004  /* PED_DMA_COMMON.FpgaVersion */
+#define PED_DMA_COMMON_BASE              0x4000
+#define PED_DMA_COMMON_CONTROL_STATUS    0x4000
+#define PED_DMA_COMMON_FPGA_VERSION      0x4004
 
 /*
- * PED_DMA_ENGINE.ControlStatus bits (from PciInterruptService decompile)
+ * PED_DMA_ENGINE.Capabilities bits (from PedDmaInit)
+ *   Bit 0: Engine present
+ *   Bit 1: Direction (1=C2S/read, 0=S2C/write)
+ *   Bits 16+: Max transfer size shift / IRQ line
+ */
+#define PED_DMA_CAP_PRESENT              0x01
+#define PED_DMA_CAP_C2S                  0x02    /* Card-to-System (read) */
+
+/*
+ * PED_DMA_ENGINE.ControlStatus bits (from PciInterruptService)
  *
- * Check: if ((reg & 0x01) && (reg & 0x02))
- * Clear: write 0x03
+ * ISR check: if ((status & 1) && (status & 2))
+ * Acknowledge: write 0x03
  */
-#define PED_INT_PENDING                  0x01    /* Bit 0: interrupt pending */
-#define PED_INT_ENABLED                  0x02    /* Bit 1: interrupt enabled/complete */
-#define PED_INT_CLEAR                    0x03    /* Write to clear both bits */
+#define PED_DMA_CTRL_RUNNING             0x01    /* Bit 0: engine running */
+#define PED_DMA_CTRL_INT_PENDING         0x02    /* Bit 1: interrupt/complete */
+#define PED_DMA_CTRL_ACK                 0x03    /* Write to acknowledge */
 
 /*
- * PED_DMA_COMMON.ControlStatus bits (from CPCIeCntl_EnableInterrupts decompile)
- *
- * Enable:  |= 0x01
- * Disable: &= 0xFFFFFFFE
+ * PED_DMA_COMMON.ControlStatus bits
  */
-#define PED_GLOBAL_INT_ENABLE            0x01    /* Bit 0: global interrupt enable */
+#define PED_GLOBAL_INT_ENABLE            0x01
 #define PED_GLOBAL_INT_DISABLE_MASK      0xFFFFFFFE
 
 /*
- * _PCIE_DEVICE_EXTENSION offsets (from Ghidra structure)
+ * HCI interrupt register (BAR1 + 0x30)
+ * From PciInterruptService: *(pRegistersEx + 0x30) & 0x40000000
  */
-#define PCIE_EXT_INTERRUPT_STATUS        0x0B0   /* _PCIE_DEVICE_EXTENSION.InterruptStatus */
-#define PCIE_EXT_INTERRUPT_ENABLE        0x0B4   /* _PCIE_DEVICE_EXTENSION.InterruptEnable */
-#define PCIE_EXT_DMA_DEVICES             0x0F8   /* _PCIE_DEVICE_EXTENSION.DmaDevices[64] */
-#define PCIE_EXT_NUM_DMA_AVAILABLE       0x1328  /* _PCIE_DEVICE_EXTENSION.m_NumDmaAvailable */
-#define PCIE_EXT_REGISTERS               0x1758  /* _PCIE_DEVICE_EXTENSION.pRegisters */
-#define PCIE_EXT_REGISTERS_EX            0x1760  /* _PCIE_DEVICE_EXTENSION.pRegistersEx */
-
-/*
- * DEVICE_TRANSFER size (from Ghidra: DmaDevices[64] spans 0x1200 bytes)
- * 0x1200 / 64 = 0x48 bytes per entry
- */
-#define DEVICE_TRANSFER_SIZE             0x48    /* sizeof(DEVICE_TRANSFER) */
+#define HCI_INT_STATUS_REG               0x30
+#define HCI_INT_STATUS_BIT               0x40000000
 
 /*
  * Function prototypes

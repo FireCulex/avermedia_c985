@@ -15,208 +15,48 @@
 #include "qphci.h"
 #include "cqlcodec.h"
 #include "interrupts.h"
+#include "dma.h"
 
 /* Firmware files */
 #define FW_VIDEO    "avermedia/qpvidfwpcie.bin"
 #define FW_AUDIO    "avermedia/qpaudfw.bin"
 
 /* Card RAM addresses */
-#define CARD_RAM_VIDEO_BASE  0x00000000
-#define CARD_RAM_AUDIO_BASE  0x00100000
+#define CARD_RAM_VIDEO_BASE     0x00000000
+#define CARD_RAM_AUDIO_BASE     0x00100000
+#define CARD_RAM_AUDIO_END      0x00170624  /* Zero-fill target */
 
-/* QPSOS signature */
-#define QPSOS_SIGNATURE      0x534f5351  /* "QSSO" little-endian */
+/* QPSOS signature and offsets */
+#define QPSOS_SIGNATURE         0x534F5351  /* "QSSO" */
+#define QPSOS_SIG_OFFSET        0x100
+#define QPSOS_VER_OFFSET        0x106
 
+/* Module parameter: upload method */
+static int use_dma = 1;
+module_param(use_dma, int, 0644);
+MODULE_PARM_DESC(use_dma, "Use DMA for firmware upload (1=DMA, 0=CPR)");
 
-/* Forward declarations */
-static int fw_upload_to_card(struct c985_poc *d, const u8 *data,
-                             size_t size, u32 card_addr);
-static int fw_detect_qpsos_version(struct c985_poc *d,
-                                   const struct firmware *fw_vid,
-                                   u32 *version);
-static void fw_setup_plls(struct c985_poc *d);
-static int fw_verify_upload(struct c985_poc *d, const struct firmware *fw_vid,
-                            const struct firmware *fw_aud);
-static void fw_enable_hci_interrupts(struct c985_poc *d);
+/* Module parameter: run tests */
+static int run_dma_tests = 0;
+module_param(run_dma_tests, int, 0644);
+MODULE_PARM_DESC(run_dma_tests, "Run DMA diagnostics before firmware upload");
 
-/**
- * firmware_download_all - Main firmware download sequence
- * @d: device context
- *
- * Implements CQLCodec_FWDownloadAll sequence:
- *   1. ResetArm(0) - halt ARM
- *   2. QPHCI_ReInit
- *   3. InitializeMemory
- *   4. AO/VO switch, GPIO defaults
- *   5. Delay 50ms
- *   6. Clear bit 13 of reg 0x00
- *   7. Upload audio FW to 0x100000
- *   8. Delay 1ms
- *   9. Upload video FW to 0x000000
- *  10. Delay 500us
- *  11. ResetArm(1) - start ARM
- *  12. Delay 150ms
- *
- * Returns 0 on success, negative error code on failure.
- */
-int firmware_download_all(struct c985_poc *d)
-{
-    const struct firmware *fw_vid = NULL;
-    const struct firmware *fw_aud = NULL;
-    u32 qpsos_version = 0;
-    u32 reg0;
-    int ret;
-
-    dev_info(&d->pdev->dev, "=== FIRMWARE DOWNLOAD START ===\n");
-
-    /* Load firmware files */
-    ret = request_firmware(&fw_vid, FW_VIDEO, &d->pdev->dev);
-    if (ret) {
-        dev_err(&d->pdev->dev, "Cannot load video FW '%s': %d\n", FW_VIDEO, ret);
-        return ret;
-    }
-    dev_info(&d->pdev->dev, "Video FW: %zu bytes\n", fw_vid->size);
-
-    ret = request_firmware(&fw_aud, FW_AUDIO, &d->pdev->dev);
-    if (ret) {
-        dev_err(&d->pdev->dev, "Cannot load audio FW '%s': %d\n", FW_AUDIO, ret);
-        goto out_free_vid;
-    }
-    dev_info(&d->pdev->dev, "Audio FW: %zu bytes\n", fw_aud->size);
-
-    /* Step 1: ResetArm(0) - halt ARM */
-    ret = dm_reset_arm(d, 0);
-    if (ret)
-        goto out_free_all;
-
-    /* Step 2: QPHCI_ReInit */
-    ret = qphci_reinit(d);
-    if (ret)
-        goto out_free_all;
-
-    /* Step 3: InitializeMemory */
-    ret = codec_initialize_memory(d);
-    if (ret)
-        goto out_free_all;
-
-    /* Step 4: AO/VO switch, GPIO defaults */
-    cqlcodec_ao_switch(d, !d->ao_enable);
-    cqlcodec_vo_switch(d, !d->vo_enable);
-    gpio_set_defaults(d);
-
-    /* Step 5: Delay 50ms */
-    msleep(50);
-
-    /* Step 6: Clear bit 13 of reg 0x00 */
-    reg0 = readl(d->bar1 + 0x00);
-    writel(reg0 & ~BIT(13), d->bar1 + 0x00);
-    udelay(1);
-
-    /* Step 7: Upload audio FW to 0x100000 */
-    ret = fw_upload_to_card(d, fw_aud->data, fw_aud->size, CARD_RAM_AUDIO_BASE);
-    if (ret) {
-        dev_err(&d->pdev->dev, "Audio FW upload failed: %d\n", ret);
-        goto out_free_all;
-    }
-
-    /* Step 8: Delay 1ms */
-
-    /* Zero-fill from end of audio FW to 0x170624 */
-    {
-        u32 audio_end = ALIGN(fw_aud->size, 4);
-        u32 fill_end = 0x70624;
-        u32 addr;
-
-        if (audio_end < fill_end) {
-            dev_info(&d->pdev->dev, "Zero-filling 0x%06x to 0x%06x\n",
-                     CARD_RAM_AUDIO_BASE + audio_end,
-                     CARD_RAM_AUDIO_BASE + fill_end);
-            for (addr = audio_end; addr < fill_end; addr += 4) {
-                cpr_write(d, CARD_RAM_AUDIO_BASE + addr, 0);
-            }
-        }
-    }
-    msleep(1);
-
-    /* Detect QPSOS version and setup registers */
-    fw_detect_qpsos_version(d, fw_vid, &qpsos_version);
-    fw_setup_plls(d);
-
-    /* Clear mailbox before video FW upload */
-    writel(0, d->bar1 + 0x6CC);
-
-    /* Step 9: Upload video FW to 0x000000 */
-    ret = fw_upload_to_card(d, fw_vid->data, fw_vid->size, CARD_RAM_VIDEO_BASE);
-    if (ret) {
-        dev_err(&d->pdev->dev, "Video FW upload failed: %d\n", ret);
-        goto out_free_all;
-    }
-
-    /* After video FW upload, verify QPSOS regs survived */
-    {
-        u32 v1;
-        cpr_read(d, 0x2f1094, &v1);
-        dev_info(&d->pdev->dev, "Post-upload: 0x2f1094=0x%08x (expect 1)\n", v1);
-    }
-
-    /* Verify upload */
-    ret = fw_verify_upload(d, fw_vid, fw_aud);
-    if (ret)
-        dev_warn(&d->pdev->dev, "FW verify found mismatches\n");
-
-    /* Step 10: Delay 500us */
-    udelay(500);
-
-    /* Enable HCI interrupts BEFORE ARM boot */
-    fw_enable_hci_interrupts(d);
-
-    /* Step 11: ResetArm(1) - start ARM */
-    ret = dm_reset_arm(d, 1);
-    if (ret)
-        goto out_free_all;
-
-    /* Step 12: Delay 150ms for ARM to initialize */
-    msleep(150);
-    /* Test: can we write and read back 0x6C8? */
-    writel(0xDEADBEEF, d->bar1 + 0x6C8);
-    {
-        u32 rb = readl(d->bar1 + 0x6C8);
-        dev_info(&d->pdev->dev, "TEST: wrote 0xDEADBEEF to 0x6C8, read back 0x%08x\n", rb);
-    }
-    writel(0x00000000, d->bar1 + 0x6C8);  /* Clear it */
-    /* Enable PCIe interrupts */
-    cpciectl_enable_interrupts(d);
-
-    /* Set default volumes */
-    d->ai_volume = 8;
-    d->ao_volume = 8;
-
-    dev_info(&d->pdev->dev, "=== FIRMWARE DOWNLOAD COMPLETE ===\n");
-    dev_info(&d->pdev->dev, "ARM status: 0x80C=0x%08x 0x800=0x%08x\n",
-             readl(d->bar1 + 0x80C), readl(d->bar1 + 0x800));
-
-    ret = 0;
-
-    out_free_all:
-    release_firmware(fw_aud);
-    out_free_vid:
-    release_firmware(fw_vid);
-    return ret;
-}
+/* ========== Upload Methods ========== */
 
 /**
- * fw_upload_to_card - Upload firmware data to card RAM via CPR
+ * upload_via_cpr - Upload firmware using register-based CPR
  */
-static int fw_upload_to_card(struct c985_poc *d, const u8 *data,
-                             size_t size, u32 card_addr)
+static int upload_via_cpr(struct c985_poc *d, const u8 *data,
+                          size_t size, u32 card_addr)
 {
-    u32 sz4, i, word;
+    size_t aligned_size = ALIGN(size, 4);
+    u32 word;
+    size_t i;
     int ret;
 
-    dev_info(&d->pdev->dev, "Uploading %zu bytes to 0x%08x\n", size, card_addr);
+    dev_info(&d->pdev->dev, "CPR upload: %zu bytes to 0x%08x\n", size, card_addr);
 
-    sz4 = ALIGN(size, 4);
-    for (i = 0; i < sz4; i += 4) {
+    for (i = 0; i < aligned_size; i += 4) {
         word = 0;
         if (i < size)
             memcpy(&word, data + i, min_t(size_t, 4, size - i));
@@ -224,68 +64,166 @@ static int fw_upload_to_card(struct c985_poc *d, const u8 *data,
 
         ret = cpr_write(d, card_addr + i, word);
         if (ret) {
-            dev_err(&d->pdev->dev, "CPR write failed at offset 0x%x\n", i);
+            dev_err(&d->pdev->dev, "CPR write failed at 0x%08x\n",
+                    card_addr + (u32)i);
             return ret;
         }
+
+        /* Progress every 64KB */
+        if ((i & 0xFFFF) == 0 && i > 0)
+            dev_info(&d->pdev->dev, "  CPR progress: %zu / %zu\n", i, size);
     }
 
+    dev_info(&d->pdev->dev, "CPR upload complete\n");
     return 0;
 }
 
 /**
- * fw_detect_qpsos_version - Detect QPSOS version from video firmware
+ * upload_via_dma - Upload firmware using DMA
  */
-static int fw_detect_qpsos_version(struct c985_poc *d,
-                                   const struct firmware *fw_vid,
-                                   u32 *version)
+static int upload_via_dma(struct c985_poc *d, const u8 *data,
+                          size_t size, u32 card_addr)
 {
-    u32 sig, reg_base;
+    int ret;
+
+    dev_info(&d->pdev->dev, "DMA upload: %zu bytes to 0x%08x\n", size, card_addr);
+
+    ret = c985_dma_write_sync(d, data, card_addr, size);
+    if (ret) {
+        dev_err(&d->pdev->dev, "DMA upload failed: %d\n", ret);
+        return ret;
+    }
+
+    dev_info(&d->pdev->dev, "DMA upload complete\n");
+    return 0;
+}
+
+/**
+ * upload_firmware - Upload firmware using configured method
+ */
+static int upload_firmware(struct c985_poc *d, const u8 *data,
+                           size_t size, u32 card_addr)
+{
+    if (use_dma)
+        return upload_via_dma(d, data, size, card_addr);
+    else
+        return upload_via_cpr(d, data, size, card_addr);
+}
+
+/* ========== Verification ========== */
+
+/**
+ * verify_upload - Verify firmware was uploaded correctly
+ */
+static int verify_upload(struct c985_poc *d, const char *name,
+                         const u8 *fw_data, size_t fw_size, u32 card_addr)
+{
+    u32 card_val, fw_val;
+    int mismatches = 0;
+    size_t check_size = min(fw_size, (size_t)64);  /* Check first 64 bytes */
+    size_t i;
+
+    dev_info(&d->pdev->dev, "Verifying %s at 0x%08x (%zu bytes)\n",
+             name, card_addr, fw_size);
+
+    for (i = 0; i < check_size; i += 4) {
+        cpr_read(d, card_addr + i, &card_val);
+
+        fw_val = 0;
+        if (i < fw_size)
+            memcpy(&fw_val, fw_data + i, min_t(size_t, 4, fw_size - i));
+        fw_val = le32_to_cpu(fw_val);
+
+        if (card_val != fw_val) {
+            dev_warn(&d->pdev->dev,
+                     "  [0x%04x]: card=0x%08x expected=0x%08x MISMATCH\n",
+                     (u32)(card_addr + i), card_val, fw_val);
+            mismatches++;
+        }
+    }
+
+    if (mismatches == 0) {
+        dev_info(&d->pdev->dev, "  Verification PASSED\n");
+        return 0;
+    } else {
+        dev_err(&d->pdev->dev, "  Verification FAILED: %d mismatches\n",
+                mismatches);
+        return -EIO;
+    }
+}
+
+/**
+ * dump_arm_vectors - Dump ARM exception vector table
+ */
+static void dump_arm_vectors(struct c985_poc *d)
+{
+    u32 val;
+    int i;
+
+    dev_info(&d->pdev->dev, "=== ARM Vector Table ===\n");
+    for (i = 0; i < 0x40; i += 4) {
+        cpr_read(d, i, &val);
+        dev_info(&d->pdev->dev, "  [0x%02x] = 0x%08x\n", i, val);
+    }
+}
+
+/* ========== QPSOS Detection ========== */
+
+/**
+ * detect_qpsos_version - Detect QPSOS version from video firmware
+ */
+static int detect_qpsos_version(struct c985_poc *d,
+                                const struct firmware *fw_vid,
+                                u32 *version)
+{
+    u32 sig;
     u16 ver;
+    u32 reg_base;
 
     *version = 0;
 
-    if (fw_vid->size <= 0x108)
-        return -EINVAL;
-
-    memcpy(&sig, fw_vid->data + 0x100, 4);
-    sig = le32_to_cpu(sig);
-
-    if (sig != QPSOS_SIGNATURE) {
-        dev_warn(&d->pdev->dev, "QPSOS signature not found (got 0x%08x)\n", sig);
+    if (fw_vid->size <= QPSOS_VER_OFFSET + 2) {
+        dev_warn(&d->pdev->dev, "Video FW too small for QPSOS header\n");
         return -EINVAL;
     }
 
-    memcpy(&ver, fw_vid->data + 0x106, 2);
+    memcpy(&sig, fw_vid->data + QPSOS_SIG_OFFSET, 4);
+    sig = le32_to_cpu(sig);
+
+    if (sig != QPSOS_SIGNATURE) {
+        dev_warn(&d->pdev->dev, "QPSOS signature not found: 0x%08x\n", sig);
+        return -EINVAL;
+    }
+
+    memcpy(&ver, fw_vid->data + QPSOS_VER_OFFSET, 2);
     *version = le16_to_cpu(ver);
 
     dev_info(&d->pdev->dev, "QPSOS version: %u\n", *version);
 
-    /* Setup register base based on version */
-    reg_base = (*version < 3) ? 0x2f2000 : 0x0f2000;
-
     /* Initialize QPSOS control registers */
-    cpr_write(d, 0x2f1094, 1);    /* FwFixedMode = 1 (from registry) */
-    cpr_write(d, 0x2f1090, 0);    /* FwIntMode = 0 */
+    reg_base = (*version < 3) ? 0x2F2000 : 0x0F2000;
+
+    cpr_write(d, 0x2F1094, 1);      /* FwFixedMode = 1 */
+    cpr_write(d, 0x2F1090, 0);      /* FwIntMode = 0 */
     cpr_write(d, reg_base + 4, 0);
 
-    /* Verify writes */
+    /* Verify */
     {
         u32 v1, v2, v3;
-        cpr_read(d, 0x2f1094, &v1);
-        cpr_read(d, 0x2f1090, &v2);
+        cpr_read(d, 0x2F1094, &v1);
+        cpr_read(d, 0x2F1090, &v2);
         cpr_read(d, reg_base + 4, &v3);
-        dev_info(&d->pdev->dev, "QPSOS verify: 0x2f1094=0x%08x 0x2f1090=0x%08x reg+4=0x%08x\n",
+        dev_info(&d->pdev->dev, "QPSOS regs: 0x2F1094=0x%x 0x2F1090=0x%x base+4=0x%x\n",
                  v1, v2, v3);
     }
-
 
     return 0;
 }
 
 /**
- * fw_setup_plls - Configure PLL registers based on chip version
+ * setup_plls - Configure PLL registers
  */
-static void fw_setup_plls(struct c985_poc *d)
+static void setup_plls(struct c985_poc *d)
 {
     dev_info(&d->pdev->dev, "PLL setup: chip_ver=0x%08x\n", d->chip_ver);
 
@@ -298,84 +236,214 @@ static void fw_setup_plls(struct c985_poc *d)
 }
 
 /**
- * fw_verify_upload - Verify firmware was uploaded correctly
+ * enable_hci_interrupts - Enable ARM communication interrupts
  */
-/**
- * fw_verify_upload - Verify firmware was uploaded correctly
- */
-static int fw_verify_upload(struct c985_poc *d, const struct firmware *fw_vid,
-                            const struct firmware *fw_aud)
-{
-    u32 card_val, host_val;
-    int mismatches = 0;
-    int i;
-
-    dev_info(&d->pdev->dev, "=== FW VERIFY ===\n");
-
-    /* Dump full ARM vector table */
-    dev_info(&d->pdev->dev, "=== ARM VECTOR TABLE ===\n");
-    for (i = 0; i < 64; i += 4) {
-        cpr_read(d, i, &card_val);
-        dev_info(&d->pdev->dev, "VEC[0x%02x]: 0x%08x\n", i, card_val);
-    }
-
-    /* Verify first 32 bytes of video FW */
-    for (i = 0; i < 32; i += 4) {
-        cpr_read(d, CARD_RAM_VIDEO_BASE + i, &card_val);
-        host_val = 0;
-        if (i < fw_vid->size)
-            memcpy(&host_val, fw_vid->data + i, min_t(size_t, 4, fw_vid->size - i));
-        host_val = le32_to_cpu(host_val);
-
-        if (card_val != host_val) {
-            dev_info(&d->pdev->dev, "[0x%04x]: card=0x%08x fw=0x%08x MISMATCH\n",
-                     i, card_val, host_val);
-            mismatches++;
-        } else {
-            dev_info(&d->pdev->dev, "[0x%04x]: card=0x%08x fw=0x%08x OK\n",
-                     i, card_val, host_val);
-        }
-    }
-
-    /* Verify first 16 bytes of audio FW */
-    for (i = 0; i < 16; i += 4) {
-        cpr_read(d, CARD_RAM_AUDIO_BASE + i, &card_val);
-        host_val = 0;
-        if (i < fw_aud->size)
-            memcpy(&host_val, fw_aud->data + i, min_t(size_t, 4, fw_aud->size - i));
-        host_val = le32_to_cpu(host_val);
-
-        if (card_val != host_val) {
-            dev_info(&d->pdev->dev, "AUD[0x%06x]: card=0x%08x fw=0x%08x MISMATCH\n",
-                     CARD_RAM_AUDIO_BASE + i, card_val, host_val);
-            mismatches++;
-        } else {
-            dev_info(&d->pdev->dev, "AUD[0x%06x]: card=0x%08x fw=0x%08x OK\n",
-                     CARD_RAM_AUDIO_BASE + i, card_val, host_val);
-        }
-    }
-
-    dev_info(&d->pdev->dev, "FW verify: %d mismatches\n", mismatches);
-
-    return mismatches;
-}
-
-/**
- * fw_enable_hci_interrupts - Enable HCI interrupts for ARM communication
- *
- * From DM_EnableInterrupt:
- *   bits 0-2 = interrupt enable mask
- *   bits 16-18 = interrupt status (cleared by writing)
- */
-static void fw_enable_hci_interrupts(struct c985_poc *d)
+static void enable_hci_interrupts(struct c985_poc *d)
 {
     u32 val;
 
     val = readl(d->bar1 + 0x800);
-    val |= 0x07;          /* Enable ARM msg, DMA write, DMA read */
-    val &= 0xfff8ffff;    /* Clear status bits 16-18 */
+    val |= 0x07;            /* Enable bits 0-2 */
+    val &= 0xFFF8FFFF;      /* Clear status bits 16-18 */
     writel(val, d->bar1 + 0x800);
 
-    dev_info(&d->pdev->dev, "HCI interrupts enabled: 0x800=0x%08x\n",
+    dev_info(&d->pdev->dev, "HCI interrupts: 0x800=0x%08x\n",
              readl(d->bar1 + 0x800));
+}
+
+/* ========== Main Download Sequence ========== */
+
+/**
+ * firmware_download_all - Complete firmware download sequence
+ */
+int firmware_download_all(struct c985_poc *d)
+{
+    const struct firmware *fw_vid = NULL;
+    const struct firmware *fw_aud = NULL;
+    u32 qpsos_version = 0;
+    u32 reg0;
+    u32 addr;
+    int ret;
+
+    dev_info(&d->pdev->dev, "========================================\n");
+    dev_info(&d->pdev->dev, "=== FIRMWARE DOWNLOAD START ===\n");
+    dev_info(&d->pdev->dev, "Method: %s\n", use_dma ? "DMA" : "CPR");
+    dev_info(&d->pdev->dev, "========================================\n");
+
+    /* Initialize DMA if requested */
+    if (use_dma) {
+        ret = c985_dma_init(d);
+        if (ret) {
+            dev_warn(&d->pdev->dev,
+                     "DMA init failed (%d), falling back to CPR\n", ret);
+            use_dma = 0;
+        }
+    }
+
+    /* Run DMA diagnostics if enabled */
+    if (use_dma && run_dma_tests) {
+        dev_info(&d->pdev->dev, "========================================\n");
+        dev_info(&d->pdev->dev, "=== DMA DIAGNOSTICS ===\n");
+        dev_info(&d->pdev->dev, "========================================\n");
+
+        /* Test DMA vs CPR address space */
+        ret = c985_dma_test_vs_cpr(d);
+        if (ret)
+            dev_warn(&d->pdev->dev, "DMA vs CPR test failed\n");
+
+        /* Test DMA loopback */
+        ret = c985_dma_test_loopback(d);
+        if (ret) {
+            dev_warn(&d->pdev->dev,
+                     "DMA loopback failed, falling back to CPR\n");
+            use_dma = 0;
+        }
+
+        dev_info(&d->pdev->dev, "========================================\n");
+    }
+
+    /* Load firmware files */
+    ret = request_firmware(&fw_vid, FW_VIDEO, &d->pdev->dev);
+    if (ret) {
+        dev_err(&d->pdev->dev, "Cannot load '%s': %d\n", FW_VIDEO, ret);
+        goto out_cleanup;
+    }
+    dev_info(&d->pdev->dev, "Video FW: %zu bytes\n", fw_vid->size);
+
+    ret = request_firmware(&fw_aud, FW_AUDIO, &d->pdev->dev);
+    if (ret) {
+        dev_err(&d->pdev->dev, "Cannot load '%s': %d\n", FW_AUDIO, ret);
+        goto out_free_vid;
+    }
+    dev_info(&d->pdev->dev, "Audio FW: %zu bytes\n", fw_aud->size);
+
+    /* ===== STEP 1: Halt ARM ===== */
+    dev_info(&d->pdev->dev, "Step 1: Halt ARM\n");
+    ret = dm_reset_arm(d, 0);
+    if (ret)
+        goto out_free_all;
+
+    /* ===== STEP 2: Reinitialize HCI ===== */
+    dev_info(&d->pdev->dev, "Step 2: Reinit HCI\n");
+    ret = qphci_reinit(d);
+    if (ret)
+        goto out_free_all;
+
+    /* ===== STEP 3: Initialize memory controller ===== */
+    dev_info(&d->pdev->dev, "Step 3: Init memory\n");
+    ret = codec_initialize_memory(d);
+    if (ret)
+        goto out_free_all;
+
+    /* ===== STEP 4: AO/VO switch, GPIO ===== */
+    dev_info(&d->pdev->dev, "Step 4: AO/VO/GPIO setup\n");
+    cqlcodec_ao_switch(d, !d->ao_enable);
+    cqlcodec_vo_switch(d, !d->vo_enable);
+    gpio_set_defaults(d);
+
+    /* ===== STEP 5: Delay ===== */
+    dev_info(&d->pdev->dev, "Step 5: 50ms delay\n");
+    msleep(50);
+
+    /* ===== STEP 6: Clear bit 13 of reg 0x00 ===== */
+    dev_info(&d->pdev->dev, "Step 6: Clear bit 13\n");
+    reg0 = readl(d->bar1 + 0x00);
+    writel(reg0 & ~BIT(13), d->bar1 + 0x00);
+    udelay(1);
+
+    /* ===== STEP 7: Upload audio firmware ===== */
+    dev_info(&d->pdev->dev, "Step 7: Upload audio FW\n");
+    ret = upload_firmware(d, fw_aud->data, fw_aud->size, CARD_RAM_AUDIO_BASE);
+    if (ret) {
+        dev_err(&d->pdev->dev, "Audio FW upload failed\n");
+        goto out_free_all;
+    }
+
+    /* Verify audio upload */
+    verify_upload(d, "Audio FW", fw_aud->data, fw_aud->size, CARD_RAM_AUDIO_BASE);
+
+    /* ===== STEP 7b: Zero-fill to 0x170624 ===== */
+    {
+        u32 audio_end = CARD_RAM_AUDIO_BASE + ALIGN(fw_aud->size, 4);
+        dev_info(&d->pdev->dev, "Step 7b: Zero-fill 0x%06x to 0x%06x\n",
+                 audio_end, CARD_RAM_AUDIO_END);
+        for (addr = audio_end; addr < CARD_RAM_AUDIO_END; addr += 4)
+            cpr_write(d, addr, 0);
+    }
+
+    /* ===== STEP 8: Delay ===== */
+    dev_info(&d->pdev->dev, "Step 8: 1ms delay\n");
+    msleep(1);
+
+    /* ===== QPSOS setup ===== */
+    dev_info(&d->pdev->dev, "QPSOS detection\n");
+    detect_qpsos_version(d, fw_vid, &qpsos_version);
+    setup_plls(d);
+
+    /* Clear mailbox */
+    writel(0, d->bar1 + 0x6CC);
+
+    /* ===== STEP 9: Upload video firmware ===== */
+    dev_info(&d->pdev->dev, "Step 9: Upload video FW\n");
+    ret = upload_firmware(d, fw_vid->data, fw_vid->size, CARD_RAM_VIDEO_BASE);
+    if (ret) {
+        dev_err(&d->pdev->dev, "Video FW upload failed\n");
+        goto out_free_all;
+    }
+
+    /* Verify video upload */
+    verify_upload(d, "Video FW", fw_vid->data, fw_vid->size, CARD_RAM_VIDEO_BASE);
+
+    /* Dump ARM vectors for debugging */
+    dump_arm_vectors(d);
+
+    /* ===== STEP 10: Delay ===== */
+    dev_info(&d->pdev->dev, "Step 10: 500us delay\n");
+    udelay(500);
+
+    /* ===== Enable HCI interrupts ===== */
+    dev_info(&d->pdev->dev, "Enable HCI interrupts\n");
+    enable_hci_interrupts(d);
+
+    /* ===== STEP 11: Start ARM ===== */
+    dev_info(&d->pdev->dev, "Step 11: Start ARM\n");
+    ret = dm_reset_arm(d, 1);
+    if (ret)
+        goto out_free_all;
+
+    /* ===== STEP 12: Wait for ARM init ===== */
+    dev_info(&d->pdev->dev, "Step 12: 150ms delay for ARM init\n");
+    msleep(150);
+
+    /* Test mailbox access */
+    writel(0xDEADBEEF, d->bar1 + 0x6C8);
+    {
+        u32 rb = readl(d->bar1 + 0x6C8);
+        dev_info(&d->pdev->dev, "Mailbox test: wrote 0xDEADBEEF, read 0x%08x\n", rb);
+    }
+    writel(0, d->bar1 + 0x6C8);
+
+    /* Enable PCIe interrupts */
+    cpciectl_enable_interrupts(d);
+
+    /* Set default volumes */
+    d->ai_volume = 8;
+    d->ao_volume = 8;
+
+    dev_info(&d->pdev->dev, "========================================\n");
+    dev_info(&d->pdev->dev, "=== FIRMWARE DOWNLOAD COMPLETE ===\n");
+    dev_info(&d->pdev->dev, "ARM status: 0x80C=0x%08x 0x800=0x%08x\n",
+             readl(d->bar1 + 0x80C), readl(d->bar1 + 0x800));
+    dev_info(&d->pdev->dev, "========================================\n");
+
+    ret = 0;
+
+    out_free_all:
+    release_firmware(fw_aud);
+    out_free_vid:
+    release_firmware(fw_vid);
+    out_cleanup:
+    if (use_dma)
+        c985_dma_cleanup(d);
+    return ret;
 }
