@@ -20,7 +20,8 @@ $(MODULE_NAME)-objs := \
 	encoder.o \
 	pciecntl.o \
 	v4l2.o \
-	interrupts.o
+	interrupts.o \
+	firmware.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PWD  := $(shell pwd)

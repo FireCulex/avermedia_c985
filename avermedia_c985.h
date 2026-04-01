@@ -18,6 +18,8 @@ struct c985_buffer {
 };
 
 struct c985_poc {
+    u32 ver_fw_api;
+
     struct pci_dev *pdev;
     void __iomem   *bar1;
     u32             chip_ver;
