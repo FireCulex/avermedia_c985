@@ -15,6 +15,7 @@
 
 MODULE_DESCRIPTION(DRV_DESC);
 
+// CDevice::Init
 static int c985_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
     struct c985_poc *d;

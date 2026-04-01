@@ -179,6 +179,7 @@ static void pciecntl_build_descriptor(struct c985_poc *d,
  * @length:     transfer length in bytes
  * @sync:       if true, wait for completion
  */
+// CPCIeCntl_StartDMARead
 int pciecntl_start_dma_read(struct c985_poc *d,
                             u32 card_addr,
                             void *host_buf,

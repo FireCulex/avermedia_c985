@@ -12,6 +12,8 @@
 #define REG_GPIO_VAL    0x0614
 #define REG_GPIO_IN     0x0618
 
+// CQLCodec_SetGPIOBitDirection + SetGPIODefaults
+
 void gpio_drive_low(struct c985_poc *d, int pin)
 {
     u32 dir = readl(d->bar1 + REG_GPIO_DIR);
@@ -24,6 +26,7 @@ void gpio_drive_low(struct c985_poc *d, int pin)
     writel(val, d->bar1 + REG_GPIO_VAL);
 }
 
+// CQLCodec_SetGPIOBitDirection
 void gpio_release(struct c985_poc *d, int pin)
 {
     u32 dir = readl(d->bar1 + REG_GPIO_DIR);
@@ -31,6 +34,7 @@ void gpio_release(struct c985_poc *d, int pin)
     writel(dir, d->bar1 + REG_GPIO_DIR);
 }
 
+// CQLCodec_GetGPIOBitValue
 static int gpio_read(struct c985_poc *d, int pin)
 {
     u32 dir = readl(d->bar1 + REG_GPIO_DIR);
@@ -80,6 +84,8 @@ int i2c_write(struct c985_poc *d, int scl, int sda, u8 byte)
 
     return ack;
 }
+
+//	HAL::getI2C_sw logic
 
 u8 i2c_read(struct c985_poc *d, int scl, int sda, int send_ack)
 {

@@ -12,6 +12,8 @@
  *   1. pRegistersEx + 0x30 for bit 30 (0x40000000)
  *   2. Loop through DMA channels, check ControlStatus at (channel * 0x100) + 0x04
  */
+
+// PciInterruptService
 static irqreturn_t pci_interrupt_service(int irq, void *dev_id)
 {
     struct c985_poc *d = dev_id;
@@ -81,6 +83,8 @@ void cpciectl_enable_interrupts(struct c985_poc *d)
  * Original:
  *   *(pRegisters + 0x4000) &= 0xFFFFFFFE;
  */
+
+// CPCIeCntl_DisableInterrupt
 void cpciectl_disable_interrupts(struct c985_poc *d)
 {
     u32 val;

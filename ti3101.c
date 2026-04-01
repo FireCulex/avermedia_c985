@@ -12,6 +12,7 @@
 #define REG_GPIO_DIR    0x0610
 #define REG_GPIO_VAL    0x0614
 
+// TI3101::WriteRegister
 static int ti3101_write(struct c985_poc *d, u8 reg, u8 val)
 {
     u8 addr7 = TI3101_CHIP_ADDR >> 1;
@@ -37,12 +38,14 @@ static int ti3101_write(struct c985_poc *d, u8 reg, u8 val)
     return 0;
 }
 
+// TI3101::ReadRegister
 int ti3101_read_reg(struct c985_poc *d, u8 reg, u8 *out)
 {
     u8 addr7 = TI3101_CHIP_ADDR >> 1;
     return i2c_write_then_read(d, I2C_SCL_TI3101, I2C_SDA_TI3101, addr7, reg, out, 1);
 }
 
+// TI3101::HwReset
 void ti3101_hw_reset(struct c985_poc *d)
 {
     u32 dir, val;
@@ -83,6 +86,7 @@ int ti3101_probe(struct c985_poc *d)
     return 0;
 }
 
+// TI3101::setVolume
 int ti3101_set_volume(struct c985_poc *d, u32 vol)
 {
     u8 v, tmp;
@@ -138,6 +142,7 @@ int ti3101_set_volume(struct c985_poc *d, u32 vol)
     return 0;
 }
 
+// TI3101::Initialization
 int ti3101_init(struct c985_poc *d)
 {
     int ret;

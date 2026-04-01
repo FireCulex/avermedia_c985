@@ -8,6 +8,7 @@
 #include "avermedia_c985.h"
 #include "cpr.h"
 
+// CPR_MemoryWrite
 int cpr_write(struct c985_poc *d, u32 card_addr, u32 val)
 {
     u32 addr_field, ctl, tmp, status, done_code;
@@ -55,6 +56,7 @@ int cpr_write(struct c985_poc *d, u32 card_addr, u32 val)
     return 0;
 }
 
+// CPR_MemoryRead
 int cpr_read(struct c985_poc *d, u32 card_addr, u32 *out)
 {
     u32 addr_field, ctl, tmp, status, busy_sentinel;

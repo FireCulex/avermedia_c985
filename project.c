@@ -14,6 +14,7 @@
 #define REG_GPIO_DIR    0x0610
 #define REG_GPIO_VAL    0x0614
 
+// ProjectC985::Init
 int project_c985_init(struct c985_poc *d)
 {
     int ret;

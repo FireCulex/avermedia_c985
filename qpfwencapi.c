@@ -101,7 +101,7 @@ static int compute_input_control(struct c985_poc *d,
 /* -----------------------------------------------------------------------
  * SystemOpen
  * --------------------------------------------------------------------- */
-
+// QPFWCODECAPI_SystemOpen
 int qpfwencapi_system_open(struct c985_poc *d, u32 task_id, u32 function)
 {
     u32 message;
@@ -126,7 +126,7 @@ int qpfwencapi_system_open(struct c985_poc *d, u32 task_id, u32 function)
 /* -----------------------------------------------------------------------
  * SystemLink
  * --------------------------------------------------------------------- */
-
+// QPFWCODECAPI_SystemLink
 int qpfwencapi_system_link(struct c985_poc *d, u32 task_id,
                            u32 vi, u32 vic, u32 vo, u32 voc,
                            u32 ai, u32 aic, u32 ao, u32 aoc)
@@ -192,6 +192,7 @@ int qpfwencapi_set_viu_sync_code(struct c985_poc *d, u32 task_id,
  * UpdateConfig — no parameters, just cmd 6
  * --------------------------------------------------------------------- */
 
+// QPFWENCAPI_UpdateConfig
 int qpfwencapi_update_config(struct c985_poc *d, u32 task_id)
 {
     u32 message;
@@ -214,6 +215,8 @@ int qpfwencapi_update_config(struct c985_poc *d, u32 task_id)
  * StartEncoder — no parameters, just cmd 1
  * --------------------------------------------------------------------- */
 
+// QPFWENCAPI_StartEncoder
+
 static int qpfwencapi_start_encoder(struct c985_poc *d, u32 task_id)
 {
     u32 message;
@@ -235,6 +238,7 @@ static int qpfwencapi_start_encoder(struct c985_poc *d, u32 task_id)
 /* -----------------------------------------------------------------------
  * StopEncoder
  * --------------------------------------------------------------------- */
+// QPFWENCAPI_StopEncoder
 
 int qpfwencapi_stop(struct c985_poc *d)
 {
@@ -269,6 +273,7 @@ int qpfwencapi_stop(struct c985_poc *d)
 /* -----------------------------------------------------------------------
  * Write encoder config to register block
  * --------------------------------------------------------------------- */
+// CQLCodec_LoadDefaultSettings
 
 static void write_encoder_config(struct c985_poc *d, struct hdmi_video_info *vinfo)
 {

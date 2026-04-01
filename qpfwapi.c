@@ -12,6 +12,8 @@
 /*
  * Wait for mailbox to be ready (previous message consumed).
  */
+// QPFWAPI_MailboxReady
+
 int qpfwapi_mailbox_ready(struct c985_poc *d, unsigned int timeout_ms)
 {
     unsigned long timeout = jiffies + msecs_to_jiffies(timeout_ms);
@@ -40,6 +42,7 @@ int qpfwapi_mailbox_ready(struct c985_poc *d, unsigned int timeout_ms)
     }
 }
 
+// QPFWAPI_MailboxDone
 void qpfwapi_mailbox_done(struct c985_poc *d)
 {
     /* Windows driver releases semaphore here */
@@ -48,6 +51,8 @@ void qpfwapi_mailbox_done(struct c985_poc *d)
 /*
  * ACK ARM response message - clear 0x6C8
  */
+
+//QPFWAPI_AckARMMessage
 void qpfwapi_ack_arm_message(struct c985_poc *d)
 {
     u32 status = readl(d->bar1 + REG_ARM_RESPONSE);
@@ -72,6 +77,8 @@ void qpfwapi_ack_arm_message(struct c985_poc *d)
  *
  * Windows PCI_EnableInterrupt likely sets up the ARM side.
  */
+// QPFWAPI_SendMessageToARM
+
 int qpfwapi_send_message(struct c985_poc *d, u32 task_id, u32 message)
 {
     u32 status_word;
@@ -98,6 +105,8 @@ int qpfwapi_send_message(struct c985_poc *d, u32 task_id, u32 message)
 /*
  * Read ARM message registers.
  */
+
+// QPFWAPI_GetARMMessage
 int qpfwapi_get_arm_message(struct c985_poc *d,
                             u32 *msg, u32 *status,
                             u32 *p1, u32 *p2, u32 *p3, u32 *p4)
@@ -119,6 +128,7 @@ int qpfwapi_get_arm_message(struct c985_poc *d,
  *
  * Returns: 0 on success
  */
+// MM_ClearInterrupt
 int mm_clear_interrupt(struct c985_poc *d)
 {
     u32 mm_status;

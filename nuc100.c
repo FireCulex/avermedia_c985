@@ -9,6 +9,7 @@
 #include "i2c_bitbang.h"
 #include "nuc100.h"
 
+// HAL::getI2C_sw (1 byte)
 
 int nuc100_read_reg(struct c985_poc *d, u8 reg, u8 *val)
 {
@@ -29,6 +30,8 @@ int nuc100_read_reg(struct c985_poc *d, u8 reg, u8 *val)
     i2c_stop(d, I2C_SCL_NUC100, I2C_SDA_NUC100);
     return -EIO;
 }
+
+// HAL::getI2C_sw (N bytes)
 
 static int nuc100_read_block(struct c985_poc *d, u8 reg, u8 *buf, int len)
 {
@@ -53,6 +56,7 @@ static int nuc100_read_block(struct c985_poc *d, u8 reg, u8 *buf, int len)
     return -EIO;
 }
 
+/* InterfaceNUC100::getHdmiVideo_6604 */
 int nuc100_get_hdmi_timing(struct c985_poc *d,
                            struct nuc100_hdmi_timing *t,
                            int *valid)
@@ -147,6 +151,8 @@ int nuc100_get_hdmi_timing(struct c985_poc *d,
     return 0;
 }
 
+/* InterfaceNUC100::checkDevice */
+
 int nuc100_check_device(struct c985_poc *d)
 {
     u8 id[3], ver;
@@ -175,6 +181,8 @@ int nuc100_check_device(struct c985_poc *d)
     return -ENODEV;
 }
 
+/* InterfaceNUC100::InterfaceNUC100 */
+
 int nuc100_init(struct c985_poc *d)
 {
     int ret;
@@ -190,6 +198,7 @@ int nuc100_init(struct c985_poc *d)
     return 0;
 }
 
+/* InterfaceNUC100::getHdmiVideoStatus_6604 */
 int nuc100_get_hdmi_status(struct c985_poc *d)
 {
     static unsigned long last_check = 0;
@@ -239,6 +248,9 @@ int nuc100_get_hdmi_status(struct c985_poc *d)
  * buf[0] is the register address, buf[1..len-1] is data.
  * Uses raw bit-bang: START, addr+W, buf[0..len-1], STOP.
  */
+
+// HAL::setI2C_sw
+
 static int nuc100_write_block(struct c985_poc *d, const u8 *buf, int len)
 {
     u8 addr7 = NUC100_I2C_ADDR >> 1;
@@ -262,6 +274,7 @@ static int nuc100_write_block(struct c985_poc *d, const u8 *buf, int len)
     return -EIO;
 }
 
+/* InterfaceNUC100::accessRegs_viaNUC */
 int nuc100_access_regs(struct c985_poc *d, struct nuc100_params *p)
 {
     u8 addr7 = NUC100_I2C_ADDR >> 1;

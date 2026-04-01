@@ -106,6 +106,7 @@ static int upload_firmware_cpr(struct c985_poc *d, const char *path,
 /* -----------------------------------------------------------------------
  * Memory init
  * --------------------------------------------------------------------- */
+// CQLCodec_InitializeMemory
 static int codec_initialize_memory(struct c985_poc *d)
 {
     u32 local_1c, local_18, local_20, local_24, local_28;
@@ -284,6 +285,7 @@ void cqlcodec_vo_switch(struct c985_poc *d, int disable)
 /* -----------------------------------------------------------------------
  * Load default settings
  * --------------------------------------------------------------------- */
+// CQLCodec_LoadDefaultSettings
 void cqlcodec_load_default_settings(struct c985_poc *d)
 {
     dev_info(&d->pdev->dev, "CQLCodec: load default settings\n");
@@ -329,6 +331,7 @@ static void gpio_set_defaults(struct c985_poc *d)
 /* -----------------------------------------------------------------------
  * Device init
  * --------------------------------------------------------------------- */
+// CQLCodec_InitDevice
 int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
 {
     struct c985_poc *d;
@@ -499,6 +502,7 @@ void cqlcodec_remove_device(struct pci_dev *pdev)
  *   ResetArm(1)
  *   delay 150ms
  * --------------------------------------------------------------------- */
+// CQLCodec_FWDownloadAll
 int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
 {
     const struct firmware *fw_vid = NULL;
