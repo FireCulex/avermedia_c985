@@ -21,6 +21,9 @@
 #include "pciecntl.h"
 #define DRV_NAME "avermedia_c985_poc"
 
+/* Forward declaration */
+static void cqlcodec_interrupt_handler(struct work_struct *work);
+
 /* -----------------------------------------------------------------------
  * Register helpers
  * --------------------------------------------------------------------- */
@@ -328,6 +331,7 @@ static void gpio_set_defaults(struct c985_poc *d)
     c985_wr(d, REG_GPIO_VAL, 0x00000000);
 }
 
+
 /* -----------------------------------------------------------------------
  * Device init
  * --------------------------------------------------------------------- */
@@ -378,6 +382,13 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
 
     pci_set_drvdata(pdev, d);
 
+    INIT_WORK(&d->irq_work, cqlcodec_interrupt_handler);
+    INIT_WORK(&d->frame_work, encoder_frame_work_handler);
+    init_completion(&d->mailbox_complete);
+    init_completion(&d->dma_done);
+    spin_lock_init(&d->irq_lock);
+    /* ============================================ */
+
     dev_info(&pdev->dev, "=== FIRST REGISTER READ ===\n");
     dev_info(&pdev->dev, "reg 0x00 = 0x%08x\n", readl(d->bar1 + 0x00));
     dev_info(&pdev->dev, "reg 0xf14 = 0x%08x\n", readl(d->bar1 + 0x0f14));
@@ -423,6 +434,8 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
     return 0;
 
     err_out:
+    cancel_work_sync(&d->irq_work);
+    cancel_work_sync(&d->frame_work);
     if (d->irq_registered)
         free_irq(d->pdev->irq, d);
     iounmap(d->bar1);
@@ -445,6 +458,9 @@ void cqlcodec_remove_device(struct pci_dev *pdev)
 
     if (!d)
         return;
+
+    cancel_work_sync(&d->irq_work);
+    cancel_work_sync(&d->frame_work);
 
     if (d->bar0) {
         /* Disable interrupt generation */
@@ -701,6 +717,53 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
         cpciectl_enable_interrupts(d);
         dev_info(&d->pdev->dev, "Interrupts re-enabled: BAR0[0x4000]=0x%08x\n",
                  readl(d->bar0 + 0x4000));
+
+        /* ============================================
+         * NEW: Test ARM communication
+         * ============================================ */
+        {
+            u32 test_6cc, test_6c8, test_804;
+            int test_ret;
+
+            dev_info(&d->pdev->dev, "=== ARM COMM TEST ===\n");
+
+            /* Try sending SystemOpen to ARM */
+            dev_info(&d->pdev->dev, "Before send: 0x6CC=0x%08x 0x6C8=0x%08x 0x804=0x%08x\n",
+                     readl(d->bar1 + 0x6CC),
+                     readl(d->bar1 + 0x6C8),
+                     readl(d->bar1 + 0x804));
+
+            /* Write function to mailbox param register */
+            writel(0x80000011, d->bar1 + 0x6F8);
+
+            /* Build message: task_id=0, cmd=0xF1 (SystemOpen) */
+            writel(0x00000001, d->bar1 + 0x6CC);  /* status: bit 0 = send */
+            writel(0x000000F1, d->bar1 + 0x6FC);  /* message: cmd 0xF1 */
+            wmb();
+
+            /* Trigger ARM interrupt */
+            writel(0x2000000, d->bar1 + 0x24);
+            wmb();
+
+            dev_info(&d->pdev->dev, "After send: 0x6CC=0x%08x 0x24=0x%08x\n",
+                     readl(d->bar1 + 0x6CC),
+                     readl(d->bar1 + 0x24));
+
+            /* Wait a bit for ARM to process */
+            msleep(100);
+
+            test_6cc = readl(d->bar1 + 0x6CC);
+            test_6c8 = readl(d->bar1 + 0x6C8);
+            test_804 = readl(d->bar1 + 0x804);
+
+            dev_info(&d->pdev->dev, "After 100ms: 0x6CC=0x%08x 0x6C8=0x%08x 0x804=0x%08x\n",
+                     test_6cc, test_6c8, test_804);
+            dev_info(&d->pdev->dev, "BAR0: 0x8030=0x%08x 0x4000=0x%08x\n",
+                     readl(d->bar0 + 0x8030),
+                     readl(d->bar0 + 0x4000));
+            dev_info(&d->pdev->dev, "=== ARM COMM TEST DONE ===\n");
+        }
+
     }
 
     dev_info(&d->pdev->dev, "FW download complete\n");
@@ -745,3 +808,60 @@ static int cqlcodec_reset(struct c985_poc *d)
     return 0;
 }
 
+// CQLCodec_InterruptHandler
+static void cqlcodec_interrupt_handler(struct work_struct *work)
+{
+    struct c985_poc *d = container_of(work, struct c985_poc, irq_work);
+    u32 hci_status;
+    u32 arm_msg, arm_status, p1, p2, p3, p4, p5;
+    u8 cmd;
+
+    hci_status = readl(d->bar1 + REG_HCI_INT_STATUS);
+
+    dev_info(&d->pdev->dev, "IRQ work: HCI status=0x%08x\n", hci_status);  /* was dev_dbg */
+
+    if (hci_status & 0x01) {
+        arm_msg    = readl(d->bar1 + 0x6B0);
+        arm_status = readl(d->bar1 + 0x6C8);
+        p1         = readl(d->bar1 + 0x6B4);
+        p2         = readl(d->bar1 + 0x6B8);
+        p3         = readl(d->bar1 + 0x6BC);
+        p4         = readl(d->bar1 + 0x6C0);
+        p5         = readl(d->bar1 + 0x6C4);
+
+        cmd = arm_msg & 0xFF;
+
+        dev_info(&d->pdev->dev,                                              /* was dev_dbg */
+                 "ARM MSG: cmd=0x%02x status=0x%08x p1=0x%08x p2=0x%08x p3=0x%08x p4=0x%08x\n",
+                 cmd, arm_status, p1, p2, p3, p4);
+
+        switch (cmd) {
+            case 0x40:
+            case 0x41:
+                encoder_parse_arm_message(d, cmd, p1, p2, p3, p4, p5);
+                break;
+            case 0x31:
+            case 0xA2:
+                complete(&d->mailbox_complete);
+                break;
+            default:
+                dev_info(&d->pdev->dev, "Unknown ARM cmd: 0x%02x\n", cmd);  /* was dev_dbg */
+                break;
+        }
+
+        writel(0x01, d->bar1 + REG_HCI_INT_STATUS);
+
+        if (arm_status & 1)
+            writel(arm_status & ~1, d->bar1 + 0x6C8);
+    }
+
+    if (hci_status & 0x04) {
+        writel(0x04, d->bar1 + REG_HCI_INT_STATUS);
+        pciecntl_dma_read_done(d);
+    }
+
+    if (hci_status & 0x02) {
+        writel(0x02, d->bar1 + REG_HCI_INT_STATUS);
+        dev_err(&d->pdev->dev, "HCI error interrupt\n");
+    }
+}

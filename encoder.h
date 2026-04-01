@@ -4,6 +4,7 @@
 
 #include <linux/types.h>
 #include <linux/kfifo.h>
+#include <linux/workqueue.h>
 
 struct c985_poc;
 
@@ -50,5 +51,8 @@ int encoder_get_pending_frame(struct c985_poc *d, struct frame_info *frame);
 unsigned int encoder_frames_pending(struct c985_poc *d);
 
 void encoder_set_running(struct c985_poc *d, bool running);
+
+/* Frame processing work handler - called from IRQ bottom-half */
+void encoder_frame_work_handler(struct work_struct *work);
 
 #endif /* ENCODER_H */

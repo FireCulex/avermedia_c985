@@ -72,6 +72,7 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
     struct c985_buffer *buf, *tmp;
     unsigned long flags;
     int ret;
+    int i;
 
     dev_info(&d->pdev->dev, "start_streaming: count=%u\n", count);
 
@@ -90,12 +91,10 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
         return ret;
     }
 
-
-    /* Add after encoder start in c985_start_streaming */
     dev_info(&d->pdev->dev, "=== POST-START DIAGNOSTIC ===\n");
 
     /* Check what the ARM wrote back */
-    for (int i = 0; i < 16; i++) {
+    for (i = 0; i < 16; i++) {
         u32 val = readl(d->bar1 + 0x6C0 + (i * 4));
         dev_info(&d->pdev->dev, "BAR1[0x%03x] = 0x%08x\n",
                  0x6C0 + (i * 4), val);
@@ -108,14 +107,14 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
     dev_info(&d->pdev->dev, "HCI[0x80C] = 0x%08x\n", readl(d->bar1 + 0x80C));
 
     /* Check DMA registers */
-    for (int i = 0; i < 8; i++) {
+    for (i = 0; i < 8; i++) {
         u32 val = readl(d->bar1 + 0x810 + (i * 4));
         dev_info(&d->pdev->dev, "DMA[0x%03x] = 0x%08x\n",
                  0x810 + (i * 4), val);
     }
 
     /* Poll for a few seconds to see if ARM sends anything */
-    for (int i = 0; i < 50; i++) {
+    for (i = 0; i < 50; i++) {
         u32 pci_st = readl(d->bar1 + 0x4030);
         u32 hci_st = readl(d->bar1 + 0x800);
         u32 msg = readl(d->bar1 + 0x6C8);
@@ -128,10 +127,6 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
         }
         msleep(100);
     }
-
-    /* In c985_start_streaming, add this debug */
-    int i;
-
 
     dev_info(&d->pdev->dev, "=== NUC100 Register Scan ===\n");
 
@@ -147,15 +142,13 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
         }
     }
 
-
-    /* Also check IT6604 if accessible via I2C */
     dev_info(&d->pdev->dev, "=== BAR1 HDMI Status Registers ===\n");
     for (i = 0; i < 16; i++) {
         u32 val = readl(d->bar1 + 0x6B0 + (i * 4));
         dev_info(&d->pdev->dev, "BAR1[0x%03x] = 0x%08x\n", 0x6B0 + (i * 4), val);
     }
 
-    /* That's it - no blocking diagnostics */
+    dev_info(&d->pdev->dev, "=== DIAGNOSTICS COMPLETE ===\n");
 
     return 0;
 }

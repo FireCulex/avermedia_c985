@@ -331,6 +331,33 @@ static int enable_hci_communication(struct c985_poc *d)
 }
 
 /* -----------------------------------------------------------------------
+ * GetAFrame — request an encoded frame from ARM
+ *
+ * From QPFWENCAPI_GetAFrame decompile:
+ *   - Checks codec_function to verify encoder is in right mode
+ *   - For our chip type (m_ChipType & 0xe != 0):
+ *     message = (task_id << 16) | 0x12
+ *   - Calls SendMessageToARM with timeout 500
+ * --------------------------------------------------------------------- */
+int qpfwencapi_get_aframe(struct c985_poc *d, u32 task_id)
+{
+    u32 message;
+    int ret;
+
+    dev_dbg(&d->pdev->dev, "ENC: GetAFrame task=%u\n", task_id);
+
+    ret = qpfwapi_mailbox_ready(d, 500);
+    if (ret)
+        return ret;
+
+    message = (task_id << 16) | 0x12;
+    ret = qpfwapi_send_message(d, task_id, message);
+
+    qpfwapi_mailbox_done(d);
+    return ret;
+}
+
+/* -----------------------------------------------------------------------
  * Full start sequence
  * --------------------------------------------------------------------- */
 
@@ -428,6 +455,38 @@ int qpfwencapi_start(struct c985_poc *d)
         return ret;
     }
 
+    /* ---- 9. Request first frame ---- */
+    msleep(200);  /* Give encoder time to produce first frame */
+
+    dev_info(&d->pdev->dev, "ENC: pre-GetAFrame 0x6CC=0x%08x 0x6C8=0x%08x 0x804=0x%08x\n",
+             readl(d->bar1 + 0x6CC),
+             readl(d->bar1 + 0x6C8),
+             readl(d->bar1 + 0x804));
+
+    ret = qpfwencapi_get_aframe(d, task_id);
+    if (ret) {
+        dev_err(&d->pdev->dev, "GetAFrame failed: %d\n", ret);
+        /* Don't fail the whole start - encoder is running */
+    }
+
+    msleep(200);
+
+    dev_info(&d->pdev->dev,
+             "ENC: post-GetAFrame 0x6CC=0x%08x 0x6C8=0x%08x 0x804=0x%08x\n",
+             readl(d->bar1 + 0x6CC),
+             readl(d->bar1 + 0x6C8),
+             readl(d->bar1 + 0x804));
+    dev_info(&d->pdev->dev,
+             "ENC: 0x6B0=0x%08x 0x6B4=0x%08x 0x6B8=0x%08x\n",
+             readl(d->bar1 + 0x6B0),
+             readl(d->bar1 + 0x6B4),
+             readl(d->bar1 + 0x6B8));
+    dev_info(&d->pdev->dev,
+             "ENC: BAR0[0x8030]=0x%08x BAR0[0x4000]=0x%08x\n",
+             readl(d->bar0 + 0x8030),
+             readl(d->bar0 + 0x4000));
+
     dev_info(&d->pdev->dev, "ENC: start sequence complete\n");
     return 0;
 }
+

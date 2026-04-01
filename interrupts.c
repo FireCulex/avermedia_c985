@@ -35,6 +35,13 @@ static irqreturn_t pci_interrupt_service(int irq, void *dev_id)
     if (reg_8030 & 0x40000000) {
         writel(0x40000000, d->bar0 + 0x8030);
         dev_info(&d->pdev->dev, "IRQ: BAR0[0x8030] bit30 CLEARED\n");
+
+        /* ============================================
+         * NEW: Schedule bottom-half to process HCI/ARM messages
+         * ============================================ */
+        schedule_work(&d->irq_work);
+        /* ============================================ */
+
         ret = IRQ_HANDLED;
     }
 

@@ -141,3 +141,26 @@ int mm_clear_interrupt(struct c985_poc *d)
 
     return 0;
 }
+int qpfwapi_send_message_wait(struct c985_poc *d, u32 task_id, u32 message,
+                              unsigned int timeout_ms)
+{
+    int ret;
+    unsigned long timeout;
+
+    reinit_completion(&d->mailbox_complete);
+
+    ret = qpfwapi_send_message(d, task_id, message);
+    if (ret)
+        return ret;
+
+    if (timeout_ms > 0) {
+        timeout = wait_for_completion_timeout(&d->mailbox_complete,
+                                              msecs_to_jiffies(timeout_ms));
+        if (timeout == 0) {
+            dev_err(&d->pdev->dev, "Mailbox ACK timeout\n");
+            return -ETIMEDOUT;
+        }
+    }
+
+    return 0;
+}

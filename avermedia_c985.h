@@ -91,6 +91,10 @@ struct c985_poc {
 
     void __iomem *bar0;         /* BAR0 = pRegisters */
     int num_dma_channels;       /* m_NumDmaAvailable */
+    struct work_struct irq_work;        /* Bottom-half IRQ handler */
+    struct completion mailbox_complete; /* Mailbox ACK wait */
+
+    spinlock_t irq_lock;                /* IRQ state lock */
 };
 
 #define DRV_NAME "avermedia_c985_poc"
