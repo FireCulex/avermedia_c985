@@ -82,7 +82,8 @@ void cqlcodec_ao_switch(struct c985_poc *d, int disable);
 void cqlcodec_vo_switch(struct c985_poc *d, int disable);
 void cqlcodec_load_default_settings(struct c985_poc *d);
 int cqlcodec_fw_download(struct c985_poc *d, int do_reset);
-
+int codec_initialize_memory(struct c985_poc *d);
+void gpio_set_defaults(struct c985_poc *d);
 
 
 
