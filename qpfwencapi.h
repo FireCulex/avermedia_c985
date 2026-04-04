@@ -2,19 +2,20 @@
 #ifndef QPFWENCAPI_H
 #define QPFWENCAPI_H
 
-#include <linux/types.h>
+/* Command IDs */
+#define ARM_MSG_SYSTEM_OPEN     0xF1
+#define ARM_MSG_SYSTEM_LINK     0xF2
+#define ARM_MSG_SYSTEM_CLOSE    0xF3
 
-struct c985_poc;
-
-int qpfwencapi_start(struct c985_poc *d);
-int qpfwencapi_stop(struct c985_poc *d);
-
-int qpfwencapi_system_open(struct c985_poc *d, u32 task_id, u32 function);
-int qpfwencapi_system_link(struct c985_poc *d, u32 task_id,
-                           u32 vi, u32 vic, u32 vo, u32 voc,
-                           u32 ai, u32 aic, u32 ao, u32 aoc);
-int qpfwencapi_set_viu_sync_code(struct c985_poc *d, u32 task_id,
-                                 u32 code1, u32 code2);
-int qpfwencapi_update_config(struct c985_poc *d, u32 task_id);
-
+/*
+ * QPFWCODECAPI - High-level codec API
+ */
+int QPFWCODECAPI_SystemOpen(struct c985_poc *d, u32 task_id, u32 function);
+int QPFWCODECAPI_SystemClose(struct c985_poc *d, u32 task_id);
+int QPFWCODECAPI_SystemLink(struct c985_poc *d, u32 task_id,
+                            u32 video_input, u32 video_in_ch,
+                            u32 video_output, u32 video_out_ch,
+                            u32 audio_input, u32 audio_in_ch,
+                            u32 audio_output, u32 audio_out_ch);
 #endif
+

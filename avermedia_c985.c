@@ -49,9 +49,9 @@ static int c985_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
         goto err_remove;
 
     /* Register V4L2 */
-    ret = c985_v4l2_register(d);
+/*    ret = c985_v4l2_register(d);
     if (ret)
-        goto err_remove;
+        goto err_remove; */
 
     return 0;
 
@@ -65,7 +65,7 @@ static void c985_pci_remove(struct pci_dev *pdev)
     struct c985_poc *d = pci_get_drvdata(pdev);
 
     if (d) {
-        c985_v4l2_unregister(d);
+        /* c985_v4l2_unregister(d); */
     }
     cqlcodec_remove_device(pdev);
 }

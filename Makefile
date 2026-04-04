@@ -17,7 +17,6 @@ $(MODULE_NAME)-objs := \
 	qphci.o \
 	qpfwapi.o \
 	qpfwencapi.o \
-	v4l2.o \
 	interrupts.o \
 	dma.o \
 	fw_debug.o \
