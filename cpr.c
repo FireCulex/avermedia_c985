@@ -8,101 +8,99 @@
 #include "avermedia_c985.h"
 #include "cpr.h"
 
-int cpr_write(struct c985_poc *d, u32 card_addr, u32 val)
+int CPR_MemoryWrite(struct c985_poc *d, u32 param_2, u32 param_3)
 {
-    u32 addr_field, ctl, tmp, status, done_code;
+    u32 addr_field, ctl, tmp, status;
     unsigned long timeout;
     int loop_count = 0;
+    bool is_chip_v10 = (d->chip_ver == 0x10);
 
-    done_code = (d->chip_ver == CPR_CHIPVER_SPECIAL) ? 0x00 : 0x42;
-    addr_field = ((card_addr >> 2) & 0x7ffffff) << 2;
+    addr_field = ((param_2 >> 2) & 0x7ffffff) << 2;
 
-    dev_dbg(&d->pdev->dev, "CPR_WR: addr=0x%08x val=0x%08x done_code=0x%02x\n",
-            card_addr, val, done_code);
+    dev_dbg(&d->pdev->dev, "CPR_MemoryWrite() dwAddr (0x%x) dwData(0x%x)\n",
+            param_2, param_3);
 
-    writel(addr_field, d->bar1 + REG_CPR_WR_ADDR);
-    ctl = readl(d->bar1 + REG_CPR_WR_CTL);
-
-    dev_dbg(&d->pdev->dev, "CPR_WR: initial ctl=0x%08x\n", ctl);
+    writel(addr_field, d->bar1 + 0x78c);
+    ctl = readl(d->bar1 + 0x790);
 
     ctl &= 0xffff0003;
     ctl |= 0x4;
-    writel(ctl, d->bar1 + REG_CPR_WR_CTL);
-    writel(val, d->bar1 + REG_CPR_WR_DATA);
+    writel(ctl, d->bar1 + 0x790);
+    writel(param_3, d->bar1 + 0x794);
 
-    timeout = jiffies + msecs_to_jiffies(CPR_TIMEOUT_MS);
+    timeout = jiffies + msecs_to_jiffies(3000);
     for (;;) {
-        tmp = readl(d->bar1 + REG_CPR_WR_CTL);
-        status = (tmp >> 18) & 0xff;
+        tmp = readl(d->bar1 + 0x790);
 
-        loop_count++;
-        if (loop_count <= 5 || status == done_code) {
-            dev_dbg(&d->pdev->dev, "CPR_WR: loop %d status=0x%02x (want 0x%02x)\n",
-                    loop_count, status, done_code);
+        if (is_chip_v10) {
+            status = (tmp >> 18) & 0x3f;
+            if (status == 0)
+                break;
+        } else {
+            status = (tmp >> 18) & 0xff;
+            if (status == 0x42)
+                break;
         }
 
-        if (status == done_code)
-            break;
+        loop_count++;
         if (time_after(jiffies, timeout)) {
-            dev_err(&d->pdev->dev, "CPR write timeout addr=0x%08x status=0x%02x (want 0x%02x) after %d loops\n",
-                    card_addr, status, done_code, loop_count);
+            dev_err(&d->pdev->dev,
+                    "CPR_MemoryWrite() dwAddr (0x%x) dwData(0x%x) Timeout!\n",
+                    param_2, param_3);
             return -ETIMEDOUT;
         }
         udelay(10);
     }
 
-    dev_dbg(&d->pdev->dev, "CPR_WR: complete after %d loops\n", loop_count);
     return 0;
 }
-
-int cpr_read(struct c985_poc *d, u32 card_addr, u32 *out)
+int CPR_MemoryRead(struct c985_poc *d, u32 param_2, u32 *param_3)
 {
-    u32 addr_field, ctl, tmp, status, busy_sentinel;
+    u32 addr_field, ctl, tmp, status;
     unsigned long timeout;
-    int loop_count = 0;
+    bool is_chip_v10 = (d->chip_ver == 0x10);
+    int i;
 
-    busy_sentinel = (d->chip_ver == CPR_CHIPVER_SPECIAL) ? 0x3f : 0xff;
-    addr_field = ((card_addr >> 2) & 0x7ffffff) << 2;
+    addr_field = ((param_2 >> 2) & 0x7ffffff) << 2;
 
-    dev_dbg(&d->pdev->dev, "CPR_RD: addr=0x%08x busy_sentinel=0x%02x\n",
-            card_addr, busy_sentinel);
+    dev_vdbg(&d->pdev->dev, "CPR_MemoryRead() dwAddr (0x%x)\n", param_2);
 
-    writel(addr_field, d->bar1 + REG_CPR_RD_ADDR);
-    ctl = readl(d->bar1 + REG_CPR_RD_CTL);
-
-    dev_dbg(&d->pdev->dev, "CPR_RD: initial ctl=0x%08x\n", ctl);
+    writel(addr_field, d->bar1 + 0x780);
+    ctl = readl(d->bar1 + 0x784);
 
     ctl &= 0xffff0003;
     ctl |= 0x10;
-    writel(ctl, d->bar1 + REG_CPR_RD_CTL);
+    writel(ctl, d->bar1 + 0x784);
 
-    timeout = jiffies + msecs_to_jiffies(CPR_TIMEOUT_MS);
+    timeout = jiffies + msecs_to_jiffies(3000);
     for (;;) {
-        tmp = readl(d->bar1 + REG_CPR_RD_CTL);
+        tmp = readl(d->bar1 + 0x784);
         status = (tmp >> 18) & 0x3f;
 
-        loop_count++;
-        if (loop_count <= 5 || (status != busy_sentinel && status != 0x00)) {
-            dev_dbg(&d->pdev->dev, "CPR_RD: loop %d status=0x%02x\n",
-                    loop_count, status);
+        if (is_chip_v10) {
+            if (status != 0x3f && status != 0)
+                break;
+        } else {
+            if (status != 0x3f && status != 0)  /* 0xff impossible with 0x3f mask */
+                break;
         }
 
-        if (status != busy_sentinel && status != 0x00)
-            break;
         if (time_after(jiffies, timeout)) {
-            dev_err(&d->pdev->dev, "CPR read timeout addr=0x%08x status=0x%02x after %d loops\n",
-                    card_addr, status, loop_count);
+            dev_err(&d->pdev->dev,
+                    "CPR_MemoryRead() dwAddr (0x%x) Timeout!\n", param_2);
             return -ETIMEDOUT;
         }
         udelay(10);
     }
 
-    *out = readl(d->bar1 + REG_CPR_RD_DATA);
-    readl(d->bar1 + REG_CPR_RD_DATA);
-    readl(d->bar1 + REG_CPR_RD_DATA);
-    readl(d->bar1 + REG_CPR_RD_DATA);
+    /* Read 4 times, keep first */
+    *param_3 = readl(d->bar1 + 0x788);
+    for (i = 1; i < 4; i++)
+        readl(d->bar1 + 0x788);
 
-    dev_dbg(&d->pdev->dev, "CPR_RD: complete after %d loops, val=0x%08x\n",
-            loop_count, *out);
+    dev_dbg(&d->pdev->dev, "CPR_MemoryRead() dwAddr (0x%x) Data(0x%x)\n",
+            param_2, *param_3);
+
     return 0;
 }
+
