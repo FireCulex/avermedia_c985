@@ -36,8 +36,6 @@ static int init_hardware(struct c985_poc *d)
 {
     int ret;
 
-    dev_info(&d->pdev->dev, "=== Hardware Init ===\n");
-
     d->mcu_addr = NUC100_I2C_ADDR >> 1;
 
     /* NUC100 reset (GPIO 15) */
@@ -66,7 +64,6 @@ static int init_hardware(struct c985_poc *d)
         return ret;
     }
 
-    dev_info(&d->pdev->dev, "Hardware init complete\n");
     return 0;
 }
 
@@ -119,7 +116,7 @@ static int wait_for_firmware_boot(struct c985_poc *d)
     /* Check what addresses firmware gave us */
     u32 cmd_addr = ioread32(d->bar0 + 0x10);
     u32 rsp_addr = ioread32(d->bar0 + 0x14);
-    dev_info(&d->pdev->dev, "cmd_addr = 0x%08x, rsp_addr = 0x%08x\n", cmd_addr, rsp_addr);
+    dev_vdbg(&d->pdev->dev, "cmd_addr = 0x%08x, rsp_addr = 0x%08x\n", cmd_addr, rsp_addr);
 
     /* Dump debug log */
     dev_info(&d->pdev->dev, "ARM debug log:\n");
@@ -237,8 +234,6 @@ int project_c985_init(struct c985_poc *d)
 {
     int ret;
 
-    dev_info(&d->pdev->dev, "=== AVerMedia C985 Initialization ===\n");
-
     /* Step 1: Hardware init */
     ret = init_hardware(d);
     if (ret)
@@ -248,7 +243,7 @@ int project_c985_init(struct c985_poc *d)
     check_hdmi_signal(d);
 
     /* Step 3: Ring doorbell to wake ARM */
-    dev_info(&d->pdev->dev, "Waking ARM processor\n");
+
     arm_ring_doorbell(d);
 
     /* Wait for firmware boot */

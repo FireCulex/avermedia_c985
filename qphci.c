@@ -18,7 +18,7 @@ int qphci_reinit(struct c985_poc *d)
     u32 offset, start, end;
     int i;
 
-    dev_info(&d->pdev->dev, "QPHCI: reinit\n");
+    dev_dbg(&d->pdev->dev, "QPHCI: reinit\n");
 
     for (i = 0; i < 3; i++) {
         offset = i * QPHCI_PAGE_SIZE;
@@ -33,7 +33,7 @@ int qphci_reinit(struct c985_poc *d)
     writel(0x70003124, d->bar1 + REG_MEM_CTL);
     writel(0x90003124, d->bar1 + REG_MEM_CTL);
 
-    dev_info(&d->pdev->dev, "QPHCI: reinit done\n");
+    dev_dbg(&d->pdev->dev, "QPHCI: reinit done\n");
     return 0;
 }
 
@@ -45,7 +45,7 @@ int qphci_init_arm_loop(struct c985_poc *d)
 {
     int i;
 
-    dev_info(&d->pdev->dev, "QPHCI: init ARM loop\n");
+    dev_dbg(&d->pdev->dev, "QPHCI: init ARM loop\n");
 
     writel(0x00000000, d->bar1 + REG_ARM_BOOT);
 
@@ -78,7 +78,7 @@ int qphci_init_arm_loop(struct c985_poc *d)
         }
     }
 
-    dev_info(&d->pdev->dev, "QPHCI: init ARM loop done\n");
+    dev_dbg(&d->pdev->dev, "QPHCI: init ARM loop done\n");
     return 0;
 }
 
@@ -101,7 +101,7 @@ static int qphci_power_up(struct c985_poc *d)
 {
     u32 pad_ctl;
 
-    dev_info(&d->pdev->dev, "QPHCI_PowerUp()\n");
+    dev_dbg(&d->pdev->dev, "QPHCI_PowerUp()\n");
 
     /* Read pad control register 0x50 */
     pad_ctl = readl(d->bar1 + 0x50);
@@ -111,7 +111,7 @@ static int qphci_power_up(struct c985_poc *d)
 
     /* Write back */
     writel(pad_ctl, d->bar1 + 0x50);
-    dev_info(&d->pdev->dev, "QPHCI_PowerUp() pad control = 0x%x\n", pad_ctl);
+    dev_dbg(&d->pdev->dev, "QPHCI_PowerUp() pad control = 0x%x\n", pad_ctl);
 
     /* Write 0xf00 to DDR control register */
     writel(0x00000F00, d->bar1 + 0x0F1C);
@@ -134,11 +134,11 @@ int qphci_init(struct c985_poc *d)
     int i, ret;
     u32 page_size = QPHCI_PAGE_SIZE;
 
-    dev_info(&d->pdev->dev, "QPHCI_Init()\n");
+    dev_dbg(&d->pdev->dev, "QPHCI_Init()\n");
 
     /* Read chip version */
     d->chip_ver = readl(d->bar1 + 0x38);
-    dev_info(&d->pdev->dev, "QPHCI_Init() chip_ver=0x%08x\n", d->chip_ver);
+    dev_dbg(&d->pdev->dev, "QPHCI_Init() chip_ver=0x%08x\n", d->chip_ver);
 
     /* Call QPHCI_PowerUp */
     ret = qphci_power_up(d);
@@ -161,7 +161,7 @@ int qphci_init(struct c985_poc *d)
     writel(0x70003124, d->bar1 + 0x840);
     writel(0x90003124, d->bar1 + 0x840);
 
-    dev_info(&d->pdev->dev, "QPHCI_Init() done\n");
+    dev_dbg(&d->pdev->dev, "QPHCI_Init() done\n");
     return 0;
 }
 // In qphci.c
@@ -175,7 +175,7 @@ int dm_reset_arm(struct c985_poc *d, int run)
     u32 val;
     unsigned long timeout;
 
-    dev_info(&d->pdev->dev, "DM_ResetArm(run=%d)\n", run);
+    dev_dbg(&d->pdev->dev, "DM_ResetArm(run=%d)\n", run);
 
     if (run == 0) {
         writel(0x00000000, d->bar1 + REG_ARM_CTRL);
@@ -214,6 +214,6 @@ int dm_reset_arm(struct c985_poc *d, int run)
         writel(0x00000001, d->bar1 + REG_ARM_BOOT);
     }
 
-    dev_info(&d->pdev->dev, "DM_ResetArm(run=%d) done\n", run);
+    dev_dbg(&d->pdev->dev, "DM_ResetArm(run=%d) done\n", run);
     return 0;
 }

@@ -47,7 +47,7 @@ void ti3101_hw_reset(struct c985_poc *d)
 {
     u32 dir, val;
 
-    dev_info(&d->pdev->dev, "TI3101: HwReset\n");
+    dev_vdbg(&d->pdev->dev, "TI3101: HwReset\n");
 
     dir = readl(d->bar1 + REG_GPIO_DIR);
     dir |= BIT(GPIO_TI3101_RST);
@@ -62,7 +62,7 @@ void ti3101_hw_reset(struct c985_poc *d)
     val |= BIT(GPIO_TI3101_RST);
     writel(val, d->bar1 + REG_GPIO_VAL);
 
-    dev_info(&d->pdev->dev, "TI3101: HwReset done\n");
+    dev_vdbg(&d->pdev->dev, "TI3101: HwReset done\n");
 }
 
 int ti3101_probe(struct c985_poc *d)
@@ -79,7 +79,7 @@ int ti3101_probe(struct c985_poc *d)
         return -EIO;
     }
 
-    dev_info(&d->pdev->dev, "TI3101: probe ACK\n");
+    dev_vdbg(&d->pdev->dev, "TI3101: probe ACK\n");
     return 0;
 }
 
@@ -88,7 +88,7 @@ int ti3101_set_volume(struct c985_poc *d, u32 vol)
     u8 v, tmp;
     int ret;
 
-    dev_info(&d->pdev->dev, "TI3101: setVolume(%u)\n", vol);
+    dev_vdbg(&d->pdev->dev, "TI3101: setVolume(%u)\n", vol);
 
     if (vol == 6) {
         ret = ti3101_write(d, 0x0F, 0x0C); if (ret) return ret;
@@ -141,8 +141,6 @@ int ti3101_set_volume(struct c985_poc *d, u32 vol)
 int ti3101_init(struct c985_poc *d)
 {
     int ret;
-
-    dev_info(&d->pdev->dev, "TI3101: init\n");
 
     ret = ti3101_write(d, 0x03, 0x91); if (ret) return ret;
     ret = ti3101_write(d, 0x04, 0x20); if (ret) return ret;

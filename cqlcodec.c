@@ -113,20 +113,20 @@ static int codec_initialize_memory(struct c985_poc *d)
     u32 local_1c, local_18, local_20, local_24, local_28;
     int ret;
 
-    dev_info(&d->pdev->dev, "=== MEMORY INIT START ===\n");
+
 
     local_1c = 7;
     local_18 = 2;
     local_20 = 0x20007;
 
-    dev_info(&d->pdev->dev, "Initial: local_1c=%u local_18=%u local_20=0x%08x\n",
+    dev_dbg(&d->pdev->dev, "Initial: local_1c=%u local_18=%u local_20=0x%08x\n",
              local_1c, local_18, local_20);
 
     /* Write initial value to 0xf14 */
-    dev_info(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
+    dev_dbg(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
     writel(local_20, d->bar1 + 0x0f14);
 
-    dev_info(&d->pdev->dev, "CPR write addr=0x0 val=0x%08x\n", local_20);
+    dev_vdbg(&d->pdev->dev, "CPR write addr=0x0 val=0x%08x\n", local_20);
     ret = cpr_write(d, 0, local_20);
     if (ret) {
         dev_err(&d->pdev->dev, "MEMINT: CPR write #1 failed\n");
@@ -134,12 +134,12 @@ static int codec_initialize_memory(struct c985_poc *d)
     }
 
     /* Row address detection loop */
-    dev_info(&d->pdev->dev, "=== ROW ADDRESS DETECTION ===\n");
+
     for (; local_1c > 3; local_1c--) {
         u32 addr = 1 << ((local_1c + 6) & 0x1f);
         u32 val = local_1c - 1;
 
-        dev_info(&d->pdev->dev, "Row loop: local_1c=%u addr=0x%08x val=%u\n",
+        dev_vdbg(&d->pdev->dev, "Row loop: local_1c=%u addr=0x%08x val=%u\n",
                  local_1c, addr, val);
 
         ret = cpr_write(d, addr, val);
@@ -149,7 +149,7 @@ static int codec_initialize_memory(struct c985_poc *d)
         }
     }
 
-    dev_info(&d->pdev->dev, "Reading back from addr=0x0\n");
+    dev_vdbg(&d->pdev->dev, "Reading back from addr=0x0\n");
     ret = cpr_read(d, 0, &local_24);
     if (ret) {
         dev_err(&d->pdev->dev, "MEMINT: CPR read #1 failed\n");
@@ -159,14 +159,14 @@ static int codec_initialize_memory(struct c985_poc *d)
     local_1c = local_24 & 0xf;
     local_20 = (local_18 << 16) | local_1c;
 
-    dev_info(&d->pdev->dev, "Row detect result: read=0x%08x local_1c=%u local_20=0x%08x\n",
+    dev_vdbg(&d->pdev->dev, "Row detect result: read=0x%08x local_1c=%u local_20=0x%08x\n",
              local_24, local_1c, local_20);
-    dev_info(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
+    dev_vdbg(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
     writel(local_20, d->bar1 + 0x0f14);
 
     /* Column address detection */
-    dev_info(&d->pdev->dev, "=== COLUMN ADDRESS DETECTION ===\n");
-    dev_info(&d->pdev->dev, "CPR write addr=0x0 val=0x%08x\n", local_18);
+
+    dev_vdbg(&d->pdev->dev, "CPR write addr=0x0 val=0x%08x\n", local_18);
     ret = cpr_write(d, 0, local_18);
     if (ret) {
         dev_err(&d->pdev->dev, "MEMINT: CPR write #2 failed\n");
@@ -177,7 +177,7 @@ static int codec_initialize_memory(struct c985_poc *d)
         u32 addr = 1 << ((local_1c + 0x15) & 0x1f);
         u32 val = local_18 - 1;
 
-        dev_info(&d->pdev->dev, "Col loop: local_18=%u addr=0x%08x val=%u\n",
+        dev_dbg(&d->pdev->dev, "Col loop: local_18=%u addr=0x%08x val=%u\n",
                  local_18, addr, val);
 
         ret = cpr_write(d, addr, val);
@@ -187,7 +187,7 @@ static int codec_initialize_memory(struct c985_poc *d)
         }
     }
 
-    dev_info(&d->pdev->dev, "Reading back from addr=0x0\n");
+    dev_dbg(&d->pdev->dev, "Reading back from addr=0x0\n");
     ret = cpr_read(d, 0, &local_24);
     if (ret) {
         dev_err(&d->pdev->dev, "MEMINT: CPR read #2 failed\n");
@@ -197,59 +197,58 @@ static int codec_initialize_memory(struct c985_poc *d)
     local_18 = local_24 & 0xf;
     local_20 = (local_18 << 16) | local_1c;
 
-    dev_info(&d->pdev->dev, "Col detect result: read=0x%08x local_18=%u local_20=0x%08x\n",
+    dev_vdbg(&d->pdev->dev, "Col detect result: read=0x%08x local_18=%u local_20=0x%08x\n",
              local_24, local_18, local_20);
-    dev_info(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
+    dev_vdbg(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
     writel(local_20, d->bar1 + 0x0f14);
 
     /* Final register configuration */
-    dev_info(&d->pdev->dev, "=== FINAL REGISTER CONFIG ===\n");
+
     local_28 = readl(d->bar1 + 0x0f1c);
-    dev_info(&d->pdev->dev, "Read 0xf1c = 0x%08x\n", local_28);
-    dev_info(&d->pdev->dev, "Writing 0xf1c = 0x%08x\n", local_28 & 0xfffffcff);
+    dev_dbg(&d->pdev->dev, "Read 0xf1c = 0x%08x\n", local_28);
+    dev_dbg(&d->pdev->dev, "Writing 0xf1c = 0x%08x\n", local_28 & 0xfffffcff);
     writel(local_28 & 0xfffffcff, d->bar1 + 0x0f1c);
 
-    dev_info(&d->pdev->dev, "Writing memory controller registers:\n");
-    dev_info(&d->pdev->dev, "  0xf04 = 0x0d03110b\n");
+    dev_dbg(&d->pdev->dev, "Writing memory controller registers:\n");
+    dev_dbg(&d->pdev->dev, "  0xf04 = 0x0d03110b\n");
     writel(0x0d03110b, d->bar1 + 0x0f04);
 
-    dev_info(&d->pdev->dev, "  0xf08 = 0x00000003\n");
+    dev_dbg(&d->pdev->dev, "  0xf08 = 0x00000003\n");
     writel(0x00000003, d->bar1 + 0x0f08);
 
-    dev_info(&d->pdev->dev, "  0xf40 = 0x00000002\n");
+    dev_dbg(&d->pdev->dev, "  0xf40 = 0x00000002\n");
     writel(0x00000002, d->bar1 + 0x0f40);
 
-    dev_info(&d->pdev->dev, "  0xf10 = 0x05140080\n");
+    dev_dbg(&d->pdev->dev, "  0xf10 = 0x05140080\n");
     writel(0x05140080, d->bar1 + 0x0f10);
 
-    dev_info(&d->pdev->dev, "  0xf18 = 0x00000001\n");
+    dev_dbg(&d->pdev->dev, "  0xf18 = 0x00000001\n");
     writel(0x00000001, d->bar1 + 0x0f18);
 
-    dev_info(&d->pdev->dev, "Waiting 100ms for memory stabilization...\n");
+    dev_dbg(&d->pdev->dev, "Waiting 100ms for memory stabilization...\n");
     msleep(100);
 
-    /* CPR verification */
-    dev_info(&d->pdev->dev, "=== CPR CHECK: AFTER MEMORY INIT ===\n");
+
     {
         u32 test_val;
         cpr_write(d, 0, 0xAAAAAAAA);
         cpr_read(d, 0, &test_val);
-        dev_info(&d->pdev->dev,
+        dev_dbg(&d->pdev->dev,
                  "CPR[0x0] = 0x%08x (expect 0xAAAAAAAA) %s\n",
                  test_val, test_val == 0xAAAAAAAA ? "OK" : "FAIL");
 
         cpr_write(d, 0x1000, 0x55555555);
         cpr_read(d, 0x1000, &test_val);
-        dev_info(&d->pdev->dev,
+        dev_dbg(&d->pdev->dev,
                  "CPR[0x1000] = 0x%08x (expect 0x55555555) %s\n",
                  test_val, test_val == 0x55555555 ? "OK" : "FAIL");
 
-        dev_info(&d->pdev->dev,
+        dev_dbg(&d->pdev->dev,
                  "MEMCTL: 0xf04=0x%08x 0xf08=0x%08x 0xf10=0x%08x\n",
                  readl(d->bar1 + 0xf04),
                  readl(d->bar1 + 0xf08),
                  readl(d->bar1 + 0xf10));
-        dev_info(&d->pdev->dev,
+        dev_dbg(&d->pdev->dev,
                  "MEMCTL: 0xf14=0x%08x 0xf18=0x%08x 0xf1c=0x%08x 0xf40=0x%08x\n",
                  readl(d->bar1 + 0xf14),
                  readl(d->bar1 + 0xf18),
@@ -257,7 +256,6 @@ static int codec_initialize_memory(struct c985_poc *d)
                  readl(d->bar1 + 0xf40));
     }
 
-    dev_info(&d->pdev->dev, "=== MEMORY INIT COMPLETE ===\n");
     return 0;
 }
 /* -----------------------------------------------------------------------
@@ -289,7 +287,7 @@ void cqlcodec_vo_switch(struct c985_poc *d, int disable)
 // CQLCodec_LoadDefaultSettings
 void cqlcodec_load_default_settings(struct c985_poc *d)
 {
-    dev_info(&d->pdev->dev, "CQLCodec: load default settings\n");
+    dev_vdbg(&d->pdev->dev, "CQLCodec: load default settings\n");
 
     d->enc_reg_message             = ENC_REG_MESSAGE;
     d->enc_reg_system_control      = ENC_REG_SYSTEM_CONTROL;
@@ -320,7 +318,7 @@ void cqlcodec_load_default_settings(struct c985_poc *d)
     d->ai_volume = 8;
     d->ao_volume = 8;
 
-    dev_info(&d->pdev->dev, "CQLCodec: defaults loaded\n");
+    dev_dbg(&d->pdev->dev, "CQLCodec: defaults loaded\n");
 }
 
 /* -----------------------------------------------------------------------
@@ -366,7 +364,7 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
     struct c985_poc *d;
     int ret;
 
-    dev_info(&pdev->dev, "cqlcodec_init_device()\n");
+    dev_dbg(&pdev->dev, "cqlcodec_init_device()\n");
 
     ret = pcim_enable_device(pdev);
     if (ret)
@@ -414,11 +412,8 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
     init_completion(&d->dma_done);
     spin_lock_init(&d->irq_lock);
 
-    /* ⭐ STEP 0: Load configuration BEFORE any hardware access */
-    c985_get_init_data(d);
 
-    dev_info(&pdev->dev, "=== FIRST REGISTER READ ===\n");
-    dev_info(&pdev->dev, "reg 0x00 = 0x%08x\n", readl(d->bar1 + 0x00));
+    dev_dbg(&pdev->dev, "reg 0x00 = 0x%08x\n", readl(d->bar1 + 0x00));
     // ...
 
     /* Load default settings */

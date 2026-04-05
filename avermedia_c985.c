@@ -424,16 +424,16 @@ void c985_get_init_data(struct c985_poc *d)
     /* TVAudioType = 0 */
     /* AudioCodecType = 0 */
 
-    dev_info(&d->pdev->dev, "Configuration initialized:\n");
-    dev_info(&d->pdev->dev, "  ChipType=%d AccessMode=%d BusType=%d\n",
+    dev_dbg(&d->pdev->dev, "Configuration initialized:\n");
+    dev_dbg(&d->pdev->dev, "  ChipType=%d AccessMode=%d BusType=%d\n",
              d->chip_type, d->access_mode, d->bus_type);
-    dev_info(&d->pdev->dev, "  VerFwAPI=%d FwFixedMode=%d FwIntMode=%d\n",
+    dev_dbg(&d->pdev->dev, "  VerFwAPI=%d FwFixedMode=%d FwIntMode=%d\n",
              d->ver_fw_api, d->fw_fixed_mode, d->fw_int_mode);
-    dev_info(&d->pdev->dev, "  VidInputType=0x%X VIUMode=%d\n",
+    dev_dbg(&d->pdev->dev, "  VidInputType=0x%X VIUMode=%d\n",
              d->vid_input_type, d->viu_mode);
-    dev_info(&d->pdev->dev, "  AOEnable=%d VOEnable=%d\n",
+    dev_dbg(&d->pdev->dev, "  AOEnable=%d VOEnable=%d\n",
              d->ao_enable, d->vo_enable);
-    dev_info(&d->pdev->dev, "  MCU=0x%02X@GPIO%d TI3101=0x%02X@GPIO%d\n",
+    dev_dbg(&d->pdev->dev, "  MCU=0x%02X@GPIO%d TI3101=0x%02X@GPIO%d\n",
              d->mcu_addr, d->mcu_rst_gpio,
              d->alg_aud_addr, d->alg_aud_rst_gpio);
     void c985_get_init_data(struct c985_poc *d);

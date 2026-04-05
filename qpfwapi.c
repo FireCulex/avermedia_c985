@@ -140,7 +140,7 @@ int QPFWAPI_Init(struct c985_poc *d)
 {
     u32 status;
 
-    dev_info(&d->pdev->dev, "QPFWAPI_Init: Initializing firmware interface\n");
+    dev_dbg(&d->pdev->dev, "QPFWAPI_Init: Initializing firmware interface\n");
 
     /* Clear any stale mailbox state */
     writel(0x00000000, d->bar1 + REG_TO_ARM_MSG_STATUS);
@@ -157,7 +157,7 @@ int QPFWAPI_Init(struct c985_poc *d)
         return -EBUSY;
     }
 
-    dev_info(&d->pdev->dev, "QPFWAPI_Init: Ready (status=0x%08x)\n", status);
+    dev_dbg(&d->pdev->dev, "QPFWAPI_Init: Ready (status=0x%08x)\n", status);
     return 0;
 }
 

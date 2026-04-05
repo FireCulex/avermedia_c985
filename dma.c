@@ -135,7 +135,7 @@ static void scan_dma_engines(struct c985_poc *d)
     {
         u32 global_ctrl = readl(d->bar0 + DMA_GLOBAL_BASE + DMA_GLOBAL_CTRL);
         u32 global_ver = readl(d->bar0 + DMA_GLOBAL_BASE + DMA_GLOBAL_VERSION);
-        dev_info(&d->pdev->dev, "Global: ctrl=0x%08x version=0x%08x\n",
+        dev_dbg(&d->pdev->dev, "Global: ctrl=0x%08x version=0x%08x\n",
                  global_ctrl, global_ver);
     }
 
@@ -412,7 +412,6 @@ int c985_dma_init(struct c985_poc *d)
     u32 global_ctrl;
     int ret;
 
-    dev_info(&d->pdev->dev, "=== DMA INIT ===\n");
 
     if (!d->bar0) {
         dev_err(&d->pdev->dev, "BAR0 not mapped!\n");
@@ -427,9 +426,9 @@ int c985_dma_init(struct c985_poc *d)
             dev_err(&d->pdev->dev, "Failed to set DMA mask\n");
             return ret;
         }
-        dev_info(&d->pdev->dev, "Using 32-bit DMA\n");
+        dev_dbg(&d->pdev->dev, "Using 32-bit DMA\n");
     } else {
-        dev_info(&d->pdev->dev, "Using 64-bit DMA\n");
+        dev_dbg(&d->pdev->dev, "Using 64-bit DMA\n");
     }
 
     /* Scan for available engines */
@@ -450,7 +449,7 @@ int c985_dma_init(struct c985_poc *d)
         dev_info(&d->pdev->dev, "Global control now: 0x%08x\n", global_ctrl);
     }
 
-    dev_info(&d->pdev->dev, "DMA initialized successfully\n");
+    dev_vdbg(&d->pdev->dev, "DMA initialized successfully\n");
     return 0;
 }
 
@@ -459,7 +458,6 @@ int c985_dma_init(struct c985_poc *d)
  */
 void c985_dma_cleanup(struct c985_poc *d)
 {
-    dev_info(&d->pdev->dev, "DMA cleanup\n");
     engines_found = false;
 }
 

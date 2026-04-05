@@ -22,7 +22,7 @@ int QPFWCODECAPI_SystemOpen(struct c985_poc *d, u32 task_id, u32 function)
     u32 status;
     int ret;
 
-    dev_info(&d->pdev->dev,
+    dev_dbg(&d->pdev->dev,
              "QPFWCODECAPI_SystemOpen: taskId=%u function=0x%08x\n",
              task_id, function);
 
@@ -57,7 +57,7 @@ int QPFWCODECAPI_SystemOpen(struct c985_poc *d, u32 task_id, u32 function)
     /* Read response status */
     status = readl(d->bar1 + REG_FROM_ARM_MSG_STATUS);
 
-    dev_info(&d->pdev->dev,
+    dev_dbg(&d->pdev->dev,
              "QPFWCODECAPI_SystemOpen: complete, response=0x%08x\n", status);
 
     QPFWAPI_MailboxDone(d);

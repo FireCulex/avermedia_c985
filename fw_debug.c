@@ -86,12 +86,12 @@ int parse_qpsos_header(struct c985_poc *d,
     /* Determine config base address */
     if (version < 3) {
         info->config_base = 0x2F2000;  /* QPSOS2 */
-        dev_info(&d->pdev->dev,
+        dev_vdbg(&d->pdev->dev,
                  "QPSOS version %u (legacy layout, config @ 0x2F2000)\n",
                  version);
     } else {
         info->config_base = 0x0F2000;  /* QPSOS3+ */
-        dev_info(&d->pdev->dev,
+        dev_vdbg(&d->pdev->dev,
                  "QPSOS version %u (optimized layout, config @ 0x0F2000)\n",
                  version);
     }
@@ -112,7 +112,7 @@ int validate_firmware_header(struct c985_poc *d,
 {
     u32 arm_vector;
 
-    dev_info(&d->pdev->dev, "Validating %s header\n", name);
+    dev_dbg(&d->pdev->dev, "Validating %s header\n", name);
 
     /* Check minimum size for ARM vectors */
     if (fw->size < 0x20) {
@@ -131,12 +131,12 @@ int validate_firmware_header(struct c985_poc *d,
      */
     if ((arm_vector & 0xFF000000) != 0xEA000000 &&
         (arm_vector & 0xFFFFF000) != 0xE59FF000) {
-        dev_warn(&d->pdev->dev,
+        dev_dbg(&d->pdev->dev,
                  "%s: Unexpected reset vector 0x%08x (may not be ARM code)\n",
                  name, arm_vector);
         /* Don't fail - could be valid but unusual */
         } else {
-            dev_info(&d->pdev->dev,
+            dev_dbg(&d->pdev->dev,
                      "%s: Valid ARM reset vector 0x%08x\n",
                      name, arm_vector);
         }
@@ -150,29 +150,17 @@ int validate_firmware_header(struct c985_poc *d,
 void print_firmware_info(struct c985_poc *d,
                          struct fw_metadata *meta)
 {
-    dev_info(&d->pdev->dev,
-             "========================================\n");
-    dev_info(&d->pdev->dev,
-             "Firmware: %s\n", meta->name);
-    dev_info(&d->pdev->dev,
-             "  Size:    %zu bytes (0x%zx)\n",
-             meta->size, meta->size);
-    dev_info(&d->pdev->dev,
-             "  CRC32:   0x%08x\n", meta->crc32);
-
-    if (meta->version.valid) {
+    if (meta->version.valid)
         dev_info(&d->pdev->dev,
-                 "  QPSOS:   Version %u\n",
-                 meta->version.qpsos_version);
-        dev_info(&d->pdev->dev,
-                 "  Config:  Base 0x%08x\n",
+                 "Firmware %s: %zu bytes, CRC 0x%08x, QPSOS v%u @ 0x%08x",
+                 meta->name, meta->size, meta->crc32,
+                 meta->version.qpsos_version,
                  meta->version.config_base);
-    }
-
-    dev_info(&d->pdev->dev,
-             "========================================\n");
+        else
+            dev_info(&d->pdev->dev,
+                     "Firmware %s: %zu bytes, CRC 0x%08x",
+                     meta->name, meta->size, meta->crc32);
 }
-
 /**
  * verify_firmware_in_card_memory - Read back and verify uploaded firmware
  */
@@ -189,7 +177,7 @@ int verify_firmware_in_card_memory(struct c985_poc *d,
     size_t i;
     int ret = 0;
 
-    dev_info(&d->pdev->dev,
+    dev_dbg(&d->pdev->dev,
              "Verifying %s at 0x%08x (%zu bytes check)\n",
              name, card_addr, verify_size);
 
@@ -228,7 +216,7 @@ int verify_firmware_in_card_memory(struct c985_poc *d,
     }
 
     if (mismatches == 0) {
-        dev_info(&d->pdev->dev,
+        dev_vdbg(&d->pdev->dev,
                  "  Verification PASSED (%zu bytes)\n", verify_size);
         ret = 0;
     } else {
@@ -276,7 +264,7 @@ int check_firmware_compatibility(struct c985_poc *d,
                  "Warning: QPSOS3+ with small audio firmware may have issues\n");
     }
 
-    dev_info(&d->pdev->dev,
+    dev_vdbg(&d->pdev->dev,
              "Firmware compatibility: QPSOS %u with %zu byte audio FW\n",
              qpsos_version, aud_meta->size);
 

@@ -23,16 +23,16 @@ static irqreturn_t pci_interrupt_service(int irq, void *dev_id)
 
     call_count++;
     if (call_count <= 10)
-        dev_info(&d->pdev->dev, "IRQ: handler #%d\n", call_count);
+        dev_dbg(&d->pdev->dev, "IRQ: handler #%d\n", call_count);
 
     /* Check BAR0 + 0x8030, bit 30 (0x40000000) */
     reg_8030 = readl(d->bar0 + 0x8030);
     if (call_count <= 10)
-        dev_info(&d->pdev->dev, "IRQ: reg_8030=0x%08x\n", reg_8030);
+        dev_dbg(&d->pdev->dev, "IRQ: reg_8030=0x%08x\n", reg_8030);
 
     if (reg_8030 & 0x40000000) {
         writel(0x40000000, d->bar0 + 0x8030);
-        dev_info(&d->pdev->dev, "IRQ: BAR0[0x8030] bit30 CLEARED\n");
+        dev_dbg(&d->pdev->dev, "IRQ: BAR0[0x8030] bit30 CLEARED\n");
         ret = IRQ_HANDLED;
     }
 
@@ -42,17 +42,17 @@ static irqreturn_t pci_interrupt_service(int irq, void *dev_id)
         channel_status = readl(channel_base + PED_DMA_ENGINE_CONTROL_STATUS);
 
         if (call_count <= 10)
-            dev_info(&d->pdev->dev, "IRQ: ch%d status=0x%08x\n", i, channel_status);
+            dev_dbg(&d->pdev->dev, "IRQ: ch%d status=0x%08x\n", i, channel_status);
 
         if ((channel_status & 0x01) && (channel_status & 0x02)) {
             writel(0x03, channel_base + PED_DMA_ENGINE_CONTROL_STATUS);
-            dev_info(&d->pdev->dev, "IRQ: DMA ch%d CLEARED\n", i);
+            dev_dbg(&d->pdev->dev, "IRQ: DMA ch%d CLEARED\n", i);
             ret = IRQ_HANDLED;
         }
     }
 
     if (call_count <= 10)
-        dev_info(&d->pdev->dev, "IRQ: returning %s\n", ret == IRQ_HANDLED ? "HANDLED" : "NONE");
+        dev_dbg(&d->pdev->dev, "IRQ: returning %s\n", ret == IRQ_HANDLED ? "HANDLED" : "NONE");
 
     return ret;
 }

@@ -149,7 +149,7 @@ int nuc100_get_hdmi_timing(struct c985_poc *d,
 
 int nuc100_check_device(struct c985_poc *d)
 {
-    u8 id[3], ver;
+    u8 id[3], ver = 0;
     int ret;
     u8 addr7 = NUC100_I2C_ADDR >> 1;
 
@@ -159,20 +159,19 @@ int nuc100_check_device(struct c985_poc *d)
     if (ret)
         return ret;
 
-    if (id[0] == 0x39 && id[1] == 0x38 && id[2] == 0x35) {
-        dev_info(&d->pdev->dev, "NUC100: FW ID OK (0x%02x%02x%02x)\n",
-                 id[0], id[1], id[2]);
-
-        ret = i2c_write_then_read(d, I2C_SCL_NUC100, I2C_SDA_NUC100, addr7, 0x04, &ver, 1);
-        if (ret == 0)
-            dev_info(&d->pdev->dev, "NUC100: FW version 0x%02x\n", ver);
-
-        return 0;
+    if (id[0] != 0x39 || id[1] != 0x38 || id[2] != 0x35) {
+        dev_err(&d->pdev->dev, "NUC100: bad ID 0x%02x%02x%02x (expected 0x393835)",
+                id[0], id[1], id[2]);
+        return -ENODEV;
     }
 
-    dev_err(&d->pdev->dev, "NUC100: bad FW ID 0x%02x%02x%02x (want 0x393835)\n",
-            id[0], id[1], id[2]);
-    return -ENODEV;
+    ret = i2c_write_then_read(d, I2C_SCL_NUC100, I2C_SDA_NUC100, addr7, 0x04, &ver, 1);
+    if (ret)
+        dev_warn(&d->pdev->dev, "NUC100: ID 0x393835 (version read failed)");
+    else
+        dev_info(&d->pdev->dev, "NUC100: ID 0x393835, FW v0x%02x", ver);
+
+    return 0;
 }
 
 int nuc100_init(struct c985_poc *d)
