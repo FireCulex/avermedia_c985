@@ -26,6 +26,7 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 
+#include "structs.h"
 #include "avermedia_c985.h"
 #include "firmware.h"
 #include "cpr.h"
@@ -38,13 +39,7 @@
 #include "qpfwapi.h"
 #include "fw_debug.h"
 
-/* Firmware files */
-#define FW_VIDEO    "avermedia/qpvidfwpcie.bin"
-#define FW_AUDIO    "avermedia/qpaudfw.bin"
-
 /* Card RAM addresses */
-#define CARD_RAM_VIDEO_BASE     0x00000000
-#define CARD_RAM_AUDIO_BASE     0x00100000
 #define CARD_RAM_AUDIO_END      0x00170624  /* Zero-fill target */
 
 /* QPSOS signature and offsets */
@@ -139,7 +134,6 @@ void c985_write_qpsos_config(struct c985_poc *d)
 {
     u32 config_base;
 
-
     /* Determine config base from QPSOS version */
     if (d->qpsos_version < 3) {
         config_base = 0x2F2000;  /* QPSOS2 */
@@ -149,41 +143,41 @@ void c985_write_qpsos_config(struct c985_poc *d)
     d->config_base = config_base;
 
     /* Write firmware mode configuration */
-    cpr_write(d, 0x2F1094, d->fw_fixed_mode);
-    cpr_write(d, 0x2F1090, d->fw_int_mode);
+    cpr_write(d, 0x2F1094, d->codec.m_FwFixedMode);
+    cpr_write(d, 0x2F1090, d->codec.m_FwIntMode);
     cpr_write(d, config_base + 4, 0);
 
-    dev_dbg(&d->pdev->dev, "  0x2F1094 = %u (FwFixedMode)\n", d->fw_fixed_mode);
-    dev_dbg(&d->pdev->dev, "  0x2F1090 = %u (FwIntMode)\n", d->fw_int_mode);
+    dev_dbg(&d->pdev->dev, "  0x2F1094 = %u (FwFixedMode)\n", d->codec.m_FwFixedMode);
+    dev_dbg(&d->pdev->dev, "  0x2F1090 = %u (FwIntMode)\n", d->codec.m_FwIntMode);
     dev_dbg(&d->pdev->dev, "  0x%06X = 0 (config_base+4)\n", config_base + 4);
 
     /* PLL configuration for PCIe */
-    if (d->bus_type == 1) {  /* QPHCI_BUS_PCI */
+    if (d->codec.m_hci.m_bus_type == QPHCI_BUS_PCI) {
         u32 pll4_val, pll5_val;
 
-        if (d->pll4_override != 0) {
-            pll4_val = d->pll4_override;
-        } else if (d->chip_ver == 0x10020) {
-            pll4_val = 0x00030130;
+        if (d->codec.m_Pll4 != 0) {
+            pll4_val = d->codec.m_Pll4;
+        } else if (d->codec.m_ChipVersion == 0x10020) {
+            pll4_val = PLL4_VAL_10020;
         } else {
-            pll4_val = 0x00020236;
+            pll4_val = PLL4_VAL_DEFAULT;
         }
 
-        if (d->pll5_override != 0) {
-            pll5_val = d->pll5_override;
+        if (d->codec.m_Pll5 != 0) {
+            pll5_val = d->codec.m_Pll5;
         } else {
-            pll5_val = 0x00010239;
+            pll5_val = PLL5_VAL_DEFAULT;
         }
 
-        writel(pll4_val, d->bar1 + 0xC8);
-        writel(pll5_val, d->bar1 + 0xCC);
+        writel(pll4_val, c985_bar1(d) + PLL4_REG);
+        writel(pll5_val, c985_bar1(d) + PLL5_REG);
 
         dev_dbg(&d->pdev->dev, "  PLL4 (0xC8) = 0x%08X\n", pll4_val);
         dev_dbg(&d->pdev->dev, "  PLL5 (0xCC) = 0x%08X\n", pll5_val);
     }
 
     /* Clear mailbox */
-    writel(0, d->bar1 + 0x6CC);
+    writel(0, c985_bar1(d) + 0x6CC);
 
     dev_dbg(&d->pdev->dev, "QPSOS configuration complete\n");
 }
@@ -202,14 +196,15 @@ int firmware_download_all(struct c985_poc *d)
 
     u32 reg0, addr;
     int ret;
+    int i;
 
     dev_dbg(&d->pdev->dev,
-             "=== FIRMWARE DOWNLOAD START ===\n");
+            "=== FIRMWARE DOWNLOAD START ===\n");
     dev_info(&d->pdev->dev,
              "Driver v%s, upload method: %s",
              DRIVER_VERSION, use_dma ? "DMA" : "CPR");
     dev_dbg(&d->pdev->dev,
-             "Audio Firmware: %s\n", load_audio_fw ? "Enabled" : "Disabled");
+            "Audio Firmware: %s\n", load_audio_fw ? "Enabled" : "Disabled");
 
     ret = request_firmware(&fw_vid, FW_VIDEO, &d->pdev->dev);
     if (ret) {
@@ -327,8 +322,8 @@ int firmware_download_all(struct c985_poc *d)
 
     /* ===== STEP 4: AO/VO switch, GPIO ===== */
     dev_dbg(&d->pdev->dev, "Step 4: AO/VO/GPIO setup\n");
-    cqlcodec_ao_switch(d, !d->ao_enable);
-    cqlcodec_vo_switch(d, !d->vo_enable);
+    cqlcodec_ao_switch(d, !d->codec.m_AOEnable);
+    cqlcodec_vo_switch(d, !d->codec.m_VOEnable);
     gpio_set_defaults(d);
 
     /* ===== STEP 5: Delay ===== */
@@ -337,10 +332,10 @@ int firmware_download_all(struct c985_poc *d)
 
     /* ===== STEP 6: Clear bit 13 of reg 0x00 ===== */
     dev_dbg(&d->pdev->dev, "Step 6: Clear bit 13 (audio DSP clock gate)\n");
-    reg0 = readl(d->bar1 + 0x00);
+    reg0 = readl(c985_bar1(d) + 0x00);
     dev_dbg(&d->pdev->dev, "  Register 0x00: 0x%08x -> 0x%08x\n",
-             reg0, reg0 & ~BIT(13));
-    writel(reg0 & ~BIT(13), d->bar1 + 0x00);
+            reg0, reg0 & ~BIT(13));
+    writel(reg0 & ~BIT(13), c985_bar1(d) + 0x00);
     udelay(1);
 
     /* ===== STEP 7: Upload audio firmware (if enabled) ===== */
@@ -393,8 +388,8 @@ int firmware_download_all(struct c985_poc *d)
 
         /* ===== STEP 7b: Upload audio firmware ===== */
         dev_dbg(&d->pdev->dev,
-                 "Step 7b: Upload audio firmware (%zu bytes to 0x%08x)\n",
-                 fw_aud->size, CARD_RAM_AUDIO_BASE);
+                "Step 7b: Upload audio firmware (%zu bytes to 0x%08x)\n",
+                fw_aud->size, CARD_RAM_AUDIO_BASE);
 
         ret = upload_firmware(d, fw_aud->data, fw_aud->size, CARD_RAM_AUDIO_BASE);
         if (ret) {
@@ -419,8 +414,8 @@ int firmware_download_all(struct c985_poc *d)
 
     /* ===== STEP 9: Upload video firmware ===== */
     dev_dbg(&d->pdev->dev,
-             "Step 9: Upload video firmware (%zu bytes to 0x%08x)\n",
-             fw_vid->size, CARD_RAM_VIDEO_BASE);
+            "Step 9: Upload video firmware (%zu bytes to 0x%08x)\n",
+            fw_vid->size, CARD_RAM_VIDEO_BASE);
 
     ret = upload_firmware(d, fw_vid->data, fw_vid->size, CARD_RAM_VIDEO_BASE);
     if (ret) {
@@ -448,64 +443,78 @@ int firmware_download_all(struct c985_poc *d)
 
     wmb();
     udelay(10);  // Wait just 10 microseconds
-    dev_vdbg(&d->pdev->dev, "Immediate: 0x04=0x%08x\n", readl(d->bar1 + 0x04));
+    dev_vdbg(&d->pdev->dev, "Immediate: 0x04=0x%08x\n", readl(c985_bar1(d) + 0x04));
     udelay(100);
-    dev_vdbg(&d->pdev->dev, "100us: 0x04=0x%08x\n", readl(d->bar1 + 0x04));
+    dev_vdbg(&d->pdev->dev, "100us: 0x04=0x%08x\n", readl(c985_bar1(d) + 0x04));
     msleep(1);
-    dev_vdbg(&d->pdev->dev, "1ms: 0x04=0x%08x\n", readl(d->bar1 + 0x04));
+    dev_vdbg(&d->pdev->dev, "1ms: 0x04=0x%08x\n", readl(c985_bar1(d) + 0x04));
 
-    u32 val;
-    cpr_read(d, 0x692E8, &val);
-    dev_vdbg(&d->pdev->dev, "Timer magic @ 0x692E8 = 0x%08x\n", val);
-    cpr_read(d, 0x692EC, &val);
-    dev_vdbg(&d->pdev->dev, "Timer state @ 0x692EC = 0x%08x\n", val);
-    cpr_read(d, 0x4C998, &val);
-    dev_vdbg(&d->pdev->dev, "Timer ticks @ 0x4C998 = 0x%08x\n", val);
+    {
+        u32 val;
+        cpr_read(d, 0x692E8, &val);
+        dev_vdbg(&d->pdev->dev, "Timer magic @ 0x692E8 = 0x%08x\n", val);
+        cpr_read(d, 0x692EC, &val);
+        dev_vdbg(&d->pdev->dev, "Timer state @ 0x692EC = 0x%08x\n", val);
+        cpr_read(d, 0x4C998, &val);
+        dev_vdbg(&d->pdev->dev, "Timer ticks @ 0x4C998 = 0x%08x\n", val);
+    }
 
-    writel(0x01000000, d->bar1 + 0x0C);
+    writel(0x01000000, c985_bar1(d) + 0x0C);
     dev_vdbg(&d->pdev->dev, "Reg 0x04=0x%08x - 0x00036c7d, 0x08=0x%08x - 0x00000000, 0x0C=0x%08x - 0x00000000 \n",
-             readl(d->bar1 + 0x04),
-             readl(d->bar1 + 0x08),
-             readl(d->bar1 + 0x0C));
+             readl(c985_bar1(d) + 0x04),
+             readl(c985_bar1(d) + 0x08),
+             readl(c985_bar1(d) + 0x0C));
 
-    u32 intc_base;
-    cpr_read(d, 0x4C6C8, &intc_base);
-    dev_dbg(&d->pdev->dev, "Interrupt controller base @ 0x4C6C8 = 0x%08x\n", intc_base);
+    {
+        u32 intc_base;
+        cpr_read(d, 0x4C6C8, &intc_base);
+        dev_dbg(&d->pdev->dev, "Interrupt controller base @ 0x4C6C8 = 0x%08x\n", intc_base);
+    }
 
-    // Read the handler table at 0x5ECA0 + slot*8
-    u32 slot2_handler, slot2_param;
+    {
+        // Read the handler table at 0x5ECA0 + slot*8
+        u32 slot2_handler, slot2_param;
 
-    cpr_read(d, 0x5ECA0 + 2*8 + 0, &slot2_handler);  // Slot 2 handler
-    cpr_read(d, 0x5ECA0 + 2*8 + 4, &slot2_param);    // Slot 2 param
+        cpr_read(d, 0x5ECA0 + 2*8 + 0, &slot2_handler);  // Slot 2 handler
+        cpr_read(d, 0x5ECA0 + 2*8 + 4, &slot2_param);    // Slot 2 param
 
-    dev_dbg(&d->pdev->dev, "Slot 2 (IRQ 5): handler=0x%08x param=0x%08x\n",
-             slot2_handler, slot2_param);
+        dev_dbg(&d->pdev->dev, "Slot 2 (IRQ 5): handler=0x%08x param=0x%08x\n",
+                slot2_handler, slot2_param);
+    }
 
-    // Also check 0x55468 mode config
-    u32 mode_config;
-    cpr_read(d, 0x55468, &mode_config);
-    dev_dbg(&d->pdev->dev, "Mode config @ 0x55468 = 0x%08x (expect 0x02)\n",
-             mode_config);
+    {
+        // Also check 0x55468 mode config
+        u32 mode_config;
+        cpr_read(d, 0x55468, &mode_config);
+        dev_dbg(&d->pdev->dev, "Mode config @ 0x55468 = 0x%08x (expect 0x02)\n",
+                mode_config);
+    }
 
     msleep(500);
 
-    u32 response = readl(d->bar1 + 0x6C8);
-    dev_vdbg(&d->pdev->dev, "After 500ms: 0x6C8=0x%08x\n", response);
+    {
+        u32 response = readl(c985_bar1(d) + 0x6C8);
+        dev_vdbg(&d->pdev->dev, "After 500ms: 0x6C8=0x%08x\n", response);
+    }
 
-    // The config byte
-    u32 config_byte;
-    cpr_read(d, 0x4C7E0, &config_byte);
-    dev_dbg(&d->pdev->dev, "Config byte @ 0x4C7E0 = 0x%08x\n", config_byte);
+    {
+        // The config byte
+        u32 config_byte;
+        cpr_read(d, 0x4C7E0, &config_byte);
+        dev_dbg(&d->pdev->dev, "Config byte @ 0x4C7E0 = 0x%08x\n", config_byte);
 
-    // The translation table
-    u32 stride = 0x23; // 35
-    u32 base_offset = (config_byte & 0xFF) * stride;
+        // The translation table
+        {
+            u32 stride = 0x23; // 35
+            u32 base_offset = (config_byte & 0xFF) * stride;
 
-    for (int i = 0; i < 35; i++) {
-        u32 hw_irq;
-        cpr_read(d, 0x49CB4 + (base_offset + i) * 4, &hw_irq);
-        if ((s32)hw_irq >= 0) {
-            dev_dbg(&d->pdev->dev, "  LogIRQ[%2d] -> HwIRQ %d\n", i, hw_irq);
+            for (i = 0; i < 35; i++) {
+                u32 hw_irq;
+                cpr_read(d, 0x49CB4 + (base_offset + i) * 4, &hw_irq);
+                if ((s32)hw_irq >= 0) {
+                    dev_dbg(&d->pdev->dev, "  LogIRQ[%2d] -> HwIRQ %d\n", i, hw_irq);
+                }
+            }
         }
     }
 
@@ -513,22 +522,18 @@ int firmware_download_all(struct c985_poc *d)
     /* ===== STEP 12: Initialize firmware communication ===== */
     dev_vdbg(&d->pdev->dev, "Step 12: Initializing firmware communication\n");
 
-    u32 int_enable;
-    cpr_read(d, 0x04, &int_enable);  /* Interrupt controller enable */
-    dev_vdbg(&d->pdev->dev, "ARM interrupt enable: 0x%08x\n", int_enable);
-
-
-
-    cpr_read(d, 0x04, &int_enable);  /* Interrupt controller enable */
-    dev_vdbg(&d->pdev->dev, "ARM interrupt enable: 0x%08x\n", int_enable);
+    {
+        u32 int_enable;
+        cpr_read(d, 0x04, &int_enable);  /* Interrupt controller enable */
+        dev_vdbg(&d->pdev->dev, "ARM interrupt enable: 0x%08x\n", int_enable);
+    }
 
     /* Enable PCIe interrupts */
     cpciectl_enable_interrupts(d);
 
-
     /* Set default volumes */
-    d->ai_volume = 8;
-    d->ao_volume = 8;
+    d->codec.m_AIVolume = 8;
+    d->codec.m_AOVolume = 8;
 
     if (load_audio_fw)
         dev_vdbg(&d->pdev->dev,

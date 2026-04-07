@@ -11,6 +11,7 @@
 #include <linux/string.h>
 #include <linux/pci.h>
 
+#include "structs.h"
 #include "avermedia_c985.h"
 #include "firmware.h"
 #include "cpr.h"
@@ -132,13 +133,13 @@ int validate_firmware_header(struct c985_poc *d,
     if ((arm_vector & 0xFF000000) != 0xEA000000 &&
         (arm_vector & 0xFFFFF000) != 0xE59FF000) {
         dev_dbg(&d->pdev->dev,
-                 "%s: Unexpected reset vector 0x%08x (may not be ARM code)\n",
-                 name, arm_vector);
+                "%s: Unexpected reset vector 0x%08x (may not be ARM code)\n",
+                name, arm_vector);
         /* Don't fail - could be valid but unusual */
         } else {
             dev_dbg(&d->pdev->dev,
-                     "%s: Valid ARM reset vector 0x%08x\n",
-                     name, arm_vector);
+                    "%s: Valid ARM reset vector 0x%08x\n",
+                    name, arm_vector);
         }
 
         return 0;
@@ -161,6 +162,7 @@ void print_firmware_info(struct c985_poc *d,
                      "Firmware %s: %zu bytes, CRC 0x%08x",
                      meta->name, meta->size, meta->crc32);
 }
+
 /**
  * verify_firmware_in_card_memory - Read back and verify uploaded firmware
  */
@@ -169,7 +171,6 @@ int verify_firmware_in_card_memory(struct c985_poc *d,
                                    u32 card_addr,
                                    const char *name)
 {
-    //const size_t verify_size = min_t(size_t, fw->size, 1024);  /* Check first 1KB */
     const size_t verify_size = fw->size;
     u8 *readback;
     u32 card_val;
@@ -178,8 +179,8 @@ int verify_firmware_in_card_memory(struct c985_poc *d,
     int ret = 0;
 
     dev_dbg(&d->pdev->dev,
-             "Verifying %s at 0x%08x (%zu bytes check)\n",
-             name, card_addr, verify_size);
+            "Verifying %s at 0x%08x (%zu bytes check)\n",
+            name, card_addr, verify_size);
 
     /* Allocate readback buffer */
     readback = kmalloc(verify_size, GFP_KERNEL);

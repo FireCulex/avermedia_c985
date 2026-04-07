@@ -14,80 +14,13 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 
+#include "structs.h"
 #include "avermedia_c985.h"
 #include "dma.h"
 #include "cpr.h"
 #include "interrupts.h"
 
-/* ========== Hardware Constants ========== */
-
-/* Each DMA engine is 0x100 bytes (64 engines in 0x4000 = 0x100 each) */
-#define DMA_ENGINE_SIZE         0x100
-#define DMA_ENGINE_COUNT        64
-
-/* PED_DMA_ENGINE register offsets */
-#define DMA_REG_CAPS            0x00    /* R: Capabilities */
-#define DMA_REG_CTRL_STATUS     0x04    /* R/W: Control & Status */
-#define DMA_REG_DESC_LO         0x08    /* R/W: Descriptor pointer low */
-#define DMA_REG_DESC_HI         0x0C    /* R/W: Descriptor pointer high */
-#define DMA_REG_HW_TIME         0x10    /* R: Hardware time */
-#define DMA_REG_CHAIN_CMPL      0x14    /* R: Chain complete byte count */
-
-/* PED_DMA_COMMON at 0x4000 */
-#define DMA_GLOBAL_BASE         0x4000
-#define DMA_GLOBAL_CTRL         0x00    /* Control/Status */
-#define DMA_GLOBAL_VERSION      0x04    /* FPGA Version */
-
-/* Capabilities register bits */
-#define DMA_CAP_PRESENT         0x01    /* Engine present */
-#define DMA_CAP_C2S             0x02    /* Card-to-System (read), else S2C (write) */
-#define DMA_CAP_IRQ_SHIFT       16      /* IRQ line number in bits 16+ */
-
-/* Control/Status register bits */
-#define DMA_CTRL_START          0x0101  /* Start transfer */
-#define DMA_CTRL_STOP           0x0000  /* Stop/reset */
-#define DMA_STATUS_BUSY         0x0400  /* Engine busy (bit 10) */
-#define DMA_STATUS_DONE         0x0800  /* Transfer complete */
-
-/* Descriptor control word (from Windows driver) */
-#define DESC_CTRL_DEFAULT       0x0C02100F  /* Default for linear transfer */
-#define DESC_CARD_ADDR_IRQ      0x0800000000000000ULL  /* IRQ on completion */
-
-/* Timeouts */
-#define DMA_TIMEOUT_MS          5000
-#define DMA_POLL_INTERVAL_US    100
-
-#define MAX_DMA_CHANNELS    8
-
-/* ========== Hardware Descriptor ========== */
-
-/**
- * struct c985_hw_desc - 32-byte hardware DMA descriptor
- *
- * Must be 32-byte aligned per Windows driver:
- *   (PhysAddress + 0x1F) & ~0x1F
- */
-struct c985_hw_desc {
-    u32 control;        /* 0x00: Control word */
-    u32 length;         /* 0x04: Transfer length in bytes */
-    u64 host_addr;      /* 0x08: Host physical address */
-    u64 card_addr;      /* 0x10: Card address + flags in upper bits */
-    u64 next_desc;      /* 0x18: Next descriptor physical address, 0=end */
-} __packed;
-
-#define DESC_ALIGN      32
-#define MAX_CHUNK_SIZE  (64 * 1024)  /* 64KB per descriptor */
-
 /* ========== Driver State ========== */
-
-/* Discovered DMA engine info */
-struct dma_engine_info {
-    int index;          /* Engine index 0-63 */
-    u32 base;           /* Register base offset */
-    u32 caps;           /* Capabilities register */
-    bool is_c2s;        /* true=read (C2S), false=write (S2C) */
-    int irq_line;       /* IRQ line number */
-};
 
 static struct dma_engine_info s2c_engine;  /* Write engine */
 static struct dma_engine_info c2s_engine;  /* Read engine */
@@ -98,30 +31,28 @@ static bool engines_found = false;
 static void dump_descriptor(struct c985_poc *d, int idx, struct c985_hw_desc *desc)
 {
     dev_dbg(&d->pdev->dev,
-             "  Desc[%d]: ctrl=0x%08x len=0x%x host=0x%llx card=0x%llx next=0x%llx\n",
-             idx, desc->control, desc->length,
-             desc->host_addr, desc->card_addr, desc->next_desc);
+            "  Desc[%d]: ctrl=0x%08x len=0x%x host=0x%llx card=0x%llx next=0x%llx\n",
+            idx, desc->control, desc->length,
+            desc->host_addr, desc->card_addr, desc->next_desc);
 }
 
 static void dump_engine_regs(struct c985_poc *d, const char *name, u32 base)
 {
-    u32 caps = readl(d->bar0 + base + DMA_REG_CAPS);
-    u32 ctrl = readl(d->bar0 + base + DMA_REG_CTRL_STATUS);
-    u32 desc_lo = readl(d->bar0 + base + DMA_REG_DESC_LO);
-    u32 desc_hi = readl(d->bar0 + base + DMA_REG_DESC_HI);
-    u32 hw_time = readl(d->bar0 + base + DMA_REG_HW_TIME);
-    u32 chain = readl(d->bar0 + base + DMA_REG_CHAIN_CMPL);
+    u32 caps = readl(c985_bar0(d) + base + DMA_REG_CAPS);
+    u32 ctrl = readl(c985_bar0(d) + base + DMA_REG_CTRL_STATUS);
+    u32 desc_lo = readl(c985_bar0(d) + base + DMA_REG_DESC_LO);
+    u32 desc_hi = readl(c985_bar0(d) + base + DMA_REG_DESC_HI);
+    u32 hw_time = readl(c985_bar0(d) + base + DMA_REG_HW_TIME);
+    u32 chain = readl(c985_bar0(d) + base + DMA_REG_CHAIN_CMPL);
 
     dev_dbg(&d->pdev->dev,
-             "%s @ 0x%04x: caps=0x%08x ctrl=0x%08x desc=0x%08x%08x hwtime=0x%x chain=%u\n",
-             name, base, caps, ctrl, desc_hi, desc_lo, hw_time, chain);
+            "%s @ 0x%04x: caps=0x%08x ctrl=0x%08x desc=0x%08x%08x hwtime=0x%x chain=%u\n",
+            name, base, caps, ctrl, desc_hi, desc_lo, hw_time, chain);
 }
 
 /* ========== Engine Discovery ========== */
 
 /**
- * scan_dma_engines - Find all DMA engines and their capabilities
- / ***
  * scan_dma_engines - Find all DMA engines and their capabilities
  */
 static void scan_dma_engines(struct c985_poc *d)
@@ -133,20 +64,20 @@ static void scan_dma_engines(struct c985_poc *d)
 
     /* Read global control first */
     {
-        u32 global_ctrl = readl(d->bar0 + DMA_GLOBAL_BASE + DMA_GLOBAL_CTRL);
-        u32 global_ver = readl(d->bar0 + DMA_GLOBAL_BASE + DMA_GLOBAL_VERSION);
+        u32 global_ctrl = readl(c985_bar0(d) + DMA_GLOBAL_BASE + DMA_GLOBAL_CTRL);
+        u32 global_ver = readl(c985_bar0(d) + DMA_GLOBAL_BASE + DMA_GLOBAL_VERSION);
         dev_dbg(&d->pdev->dev, "Global: ctrl=0x%08x version=0x%08x\n",
-                 global_ctrl, global_ver);
+                global_ctrl, global_ver);
     }
 
     /* Reset channel count */
-    d->num_dma_channels = 0;
+    d->pcie.m_NumDmaAvailable = 0;
 
     /* Scan all 64 possible engines */
     for (i = 0; i < DMA_ENGINE_COUNT; i++) {
         u32 base = i * DMA_ENGINE_SIZE;
-        u32 caps = readl(d->bar0 + base + DMA_REG_CAPS);
-        u32 ctrl = readl(d->bar0 + base + DMA_REG_CTRL_STATUS);
+        u32 caps = readl(c985_bar0(d) + base + DMA_REG_CAPS);
+        u32 ctrl = readl(c985_bar0(d) + base + DMA_REG_CTRL_STATUS);
         bool is_c2s;
         int irq;
 
@@ -160,13 +91,13 @@ static void scan_dma_engines(struct c985_poc *d)
         irq = (caps >> DMA_CAP_IRQ_SHIFT) & 0xFF;
 
         dev_dbg(&d->pdev->dev,
-                 "DMA[%2d] @ 0x%04x: caps=0x%08x ctrl=0x%08x %s IRQ=%d\n",
-                 i, base, caps, ctrl, is_c2s ? "C2S(read)" : "S2C(write)", irq);
+                "DMA[%2d] @ 0x%04x: caps=0x%08x ctrl=0x%08x %s IRQ=%d\n",
+                i, base, caps, ctrl, is_c2s ? "C2S(read)" : "S2C(write)", irq);
 
         /* Store engine index for interrupt handler */
-        if (d->num_dma_channels < MAX_DMA_CHANNELS) {
-            d->dma_engine_idx[d->num_dma_channels] = i;
-            d->num_dma_channels++;
+        if (d->pcie.m_NumDmaAvailable < MAX_DMA_CHANNELS) {
+            d->dma_engine_idx[d->pcie.m_NumDmaAvailable] = i;
+            d->pcie.m_NumDmaAvailable++;
         }
 
         /* Remember first engine of each type for transfers */
@@ -192,17 +123,18 @@ static void scan_dma_engines(struct c985_poc *d)
     }
 
     dev_dbg(&d->pdev->dev, "Found %d S2C (write) and %d C2S (read) engines\n",
-             s2c_count, c2s_count);
+            s2c_count, c2s_count);
 
     if (s2c_count > 0 && c2s_count > 0) {
         engines_found = true;
         dev_dbg(&d->pdev->dev, "Using: Write=DMA[%d]@0x%x, Read=DMA[%d]@0x%x\n",
-                 s2c_engine.index, s2c_engine.base,
-                 c2s_engine.index, c2s_engine.base);
+                s2c_engine.index, s2c_engine.base,
+                c2s_engine.index, c2s_engine.base);
     } else {
         dev_err(&d->pdev->dev, "ERROR: Missing required DMA engines!\n");
     }
 }
+
 /* ========== DMA Transfer Core ========== */
 
 /**
@@ -215,21 +147,21 @@ static int wait_engine_idle(struct c985_poc *d, u32 base, const char *name)
     int polls = 0;
 
     while (time_before(jiffies, timeout)) {
-        status = readl(d->bar0 + base + DMA_REG_CTRL_STATUS);
+        status = readl(c985_bar0(d) + base + DMA_REG_CTRL_STATUS);
         polls++;
 
         if (!(status & DMA_STATUS_BUSY)) {
-            u32 chain = readl(d->bar0 + base + DMA_REG_CHAIN_CMPL);
+            u32 chain = readl(c985_bar0(d) + base + DMA_REG_CHAIN_CMPL);
             dev_dbg(&d->pdev->dev,
-                     "%s complete: status=0x%08x polls=%d bytes=%u\n",
-                     name, status, polls, chain);
+                    "%s complete: status=0x%08x polls=%d bytes=%u\n",
+                    name, status, polls, chain);
             return 0;
         }
 
         usleep_range(DMA_POLL_INTERVAL_US, DMA_POLL_INTERVAL_US * 2);
     }
 
-    status = readl(d->bar0 + base + DMA_REG_CTRL_STATUS);
+    status = readl(c985_bar0(d) + base + DMA_REG_CTRL_STATUS);
     dev_err(&d->pdev->dev, "%s TIMEOUT: status=0x%08x after %d polls\n",
             name, status, polls);
 
@@ -239,9 +171,6 @@ static int wait_engine_idle(struct c985_poc *d, u32 base, const char *name)
     return -ETIMEDOUT;
 }
 
-/**
- * do_dma_transfer - Execute a DMA transfer
- */
 /**
  * do_dma_transfer - Execute a DMA transfer
  *
@@ -264,14 +193,15 @@ static int do_dma_transfer(struct c985_poc *d, struct dma_engine_info *engine,
     int ret;
     u32 status;
     u64 card_addr_flags;
+    int total_descs;
 
     const char *name = is_write ? "Write" : "Read";
 
     dev_dbg(&d->pdev->dev, "=== DMA %s: %zu bytes, card=0x%08x ===\n",
-             name, size, card_addr);
+            name, size, card_addr);
 
     /* Check engine is idle */
-    status = readl(d->bar0 + engine->base + DMA_REG_CTRL_STATUS);
+    status = readl(c985_bar0(d) + engine->base + DMA_REG_CTRL_STATUS);
     if (status & DMA_STATUS_BUSY) {
         dev_err(&d->pdev->dev, "%s engine busy: 0x%08x\n", name, status);
         return -EBUSY;
@@ -281,10 +211,10 @@ static int do_dma_transfer(struct c985_poc *d, struct dma_engine_info *engine,
     num_descs = (size + MAX_CHUNK_SIZE - 1) / MAX_CHUNK_SIZE;
 
     /* For writes, add one dummy descriptor (from Windows driver) */
-    int total_descs = is_write ? num_descs + 1 : num_descs;
+    total_descs = is_write ? num_descs + 1 : num_descs;
 
     dev_dbg(&d->pdev->dev, "Need %d descriptors (%d data + %d dummy)\n",
-             total_descs, num_descs, is_write ? 1 : 0);
+            total_descs, num_descs, is_write ? 1 : 0);
 
     /* Allocate descriptor buffer (extra space for alignment) */
     descs = dma_alloc_coherent(&d->pdev->dev,
@@ -305,7 +235,7 @@ static int do_dma_transfer(struct c985_poc *d, struct dma_engine_info *engine,
     memset(descs, 0, total_descs * sizeof(*descs));
 
     dev_dbg(&d->pdev->dev, "Descriptors: phys=0x%llx aligned=0x%llx\n",
-             (u64)descs_phys, (u64)descs_aligned);
+            (u64)descs_phys, (u64)descs_aligned);
 
     /*
      * Build card address with mode flags.
@@ -360,7 +290,7 @@ static int do_dma_transfer(struct c985_poc *d, struct dma_engine_info *engine,
         descs[dummy_idx].next_desc = 0;
 
         dev_dbg(&d->pdev->dev, "  Dummy[%d]: ctrl=0x%08x len=4 card=0x%llx\n",
-                 dummy_idx, descs[dummy_idx].control, descs[dummy_idx].card_addr);
+                dummy_idx, descs[dummy_idx].control, descs[dummy_idx].card_addr);
     }
 
     /* Memory barrier before hardware sees descriptors */
@@ -370,22 +300,22 @@ static int do_dma_transfer(struct c985_poc *d, struct dma_engine_info *engine,
     dump_engine_regs(d, name, engine->base);
 
     /* Write descriptor pointer (split 32-bit writes for reliability) */
-    writel((u32)descs_aligned, d->bar0 + engine->base + DMA_REG_DESC_LO);
-    writel((u32)(descs_aligned >> 32), d->bar0 + engine->base + DMA_REG_DESC_HI);
+    writel((u32)descs_aligned, c985_bar0(d) + engine->base + DMA_REG_DESC_LO);
+    writel((u32)(descs_aligned >> 32), c985_bar0(d) + engine->base + DMA_REG_DESC_HI);
 
     /* Verify write */
     {
-        u32 lo = readl(d->bar0 + engine->base + DMA_REG_DESC_LO);
-        u32 hi = readl(d->bar0 + engine->base + DMA_REG_DESC_HI);
+        u32 lo = readl(c985_bar0(d) + engine->base + DMA_REG_DESC_LO);
+        u32 hi = readl(c985_bar0(d) + engine->base + DMA_REG_DESC_HI);
         dev_dbg(&d->pdev->dev, "Descriptor ptr set: 0x%08x%08x\n", hi, lo);
     }
 
     /* Start transfer */
     dev_dbg(&d->pdev->dev, "Starting %s DMA...\n", name);
-    writel(DMA_CTRL_START, d->bar0 + engine->base + DMA_REG_CTRL_STATUS);
+    writel(DMA_CTRL_START, c985_bar0(d) + engine->base + DMA_REG_CTRL_STATUS);
 
     /* Immediately check status */
-    status = readl(d->bar0 + engine->base + DMA_REG_CTRL_STATUS);
+    status = readl(c985_bar0(d) + engine->base + DMA_REG_CTRL_STATUS);
     dev_dbg(&d->pdev->dev, "Status after start: 0x%08x\n", status);
 
     /* Wait for completion */
@@ -412,8 +342,7 @@ int c985_dma_init(struct c985_poc *d)
     u32 global_ctrl;
     int ret;
 
-
-    if (!d->bar0) {
+    if (!c985_bar0(d)) {
         dev_err(&d->pdev->dev, "BAR0 not mapped!\n");
         return -EINVAL;
     }
@@ -439,13 +368,12 @@ int c985_dma_init(struct c985_poc *d)
         return -ENODEV;
     }
 
-
     /* Enable global DMA if needed */
-    global_ctrl = readl(d->bar0 + DMA_GLOBAL_BASE + DMA_GLOBAL_CTRL);
+    global_ctrl = readl(c985_bar0(d) + DMA_GLOBAL_BASE + DMA_GLOBAL_CTRL);
     if (!(global_ctrl & 1)) {
         dev_info(&d->pdev->dev, "Enabling global DMA control\n");
-        writel(global_ctrl | 1, d->bar0 + DMA_GLOBAL_BASE + DMA_GLOBAL_CTRL);
-        global_ctrl = readl(d->bar0 + DMA_GLOBAL_BASE + DMA_GLOBAL_CTRL);
+        writel(global_ctrl | 1, c985_bar0(d) + DMA_GLOBAL_BASE + DMA_GLOBAL_CTRL);
+        global_ctrl = readl(c985_bar0(d) + DMA_GLOBAL_BASE + DMA_GLOBAL_CTRL);
         dev_info(&d->pdev->dev, "Global control now: 0x%08x\n", global_ctrl);
     }
 
@@ -489,7 +417,7 @@ int c985_dma_write_sync(struct c985_poc *d, const void *src,
     memcpy(buf, src, size);
 
     dev_dbg(&d->pdev->dev, "Write buffer: virt=%p phys=0x%llx size=%zu\n",
-             buf, (u64)buf_phys, size);
+            buf, (u64)buf_phys, size);
 
     /* Do the transfer */
     ret = do_dma_transfer(d, &s2c_engine, buf_phys, card_addr, size, true);
@@ -527,7 +455,7 @@ int c985_dma_read_sync(struct c985_poc *d, void *dst,
     memset(buf, 0xAA, size);  /* Fill with pattern to detect reads */
 
     dev_dbg(&d->pdev->dev, "Read buffer: virt=%p phys=0x%llx size=%zu\n",
-             buf, (u64)buf_phys, size);
+            buf, (u64)buf_phys, size);
 
     /* Do the transfer */
     ret = do_dma_transfer(d, &c2s_engine, buf_phys, card_addr, size, false);

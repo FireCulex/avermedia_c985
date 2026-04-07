@@ -14,10 +14,9 @@
 #include "qphci.h"
 #include "qpfwapi.h"
 #include "firmware.h"
+#include "structs.h"
 
 #include "interrupts.h"
-
-#define DRV_NAME "avermedia_c985_poc"
 
 /* Forward declaration */
 static void cqlcodec_interrupt_handler(struct work_struct *work);
@@ -28,12 +27,12 @@ static void cqlcodec_interrupt_handler(struct work_struct *work);
 static inline void c985_wr(struct c985_poc *d, u32 off, u32 val)
 {
     dev_dbg(&d->pdev->dev, "WR [0x%04x] = 0x%08x\n", off, val);
-    writel(val, d->bar1 + off);
+    writel(val, c985_bar1(d) + off);
 }
 
 static inline u32 c985_rd(struct c985_poc *d, u32 off)
 {
-    u32 val = readl(d->bar1 + off);
+    u32 val = readl(c985_bar1(d) + off);
     dev_dbg(&d->pdev->dev, "RD [0x%04x] = 0x%08x\n", off, val);
     return val;
 }
@@ -46,25 +45,25 @@ static void dump_full_state(struct c985_poc *d, const char *tag)
     dev_info(&d->pdev->dev, "========== %s ==========\n", tag);
     dev_info(&d->pdev->dev, "[%s] IRQ: 0x04=0x%08x 0x24=0x%08x 0x4000=0x%08x 0x4030=0x%08x\n",
              tag,
-             readl(d->bar1 + 0x04),
-             readl(d->bar1 + 0x24),
-             readl(d->bar1 + 0x4000),
-             readl(d->bar1 + 0x4030));
+             readl(c985_bar1(d) + 0x04),
+             readl(c985_bar1(d) + 0x24),
+             readl(c985_bar1(d) + 0x4000),
+             readl(c985_bar1(d) + 0x4030));
     dev_info(&d->pdev->dev, "[%s] HCI: 0x800=0x%08x 0x804=0x%08x 0x80C=0x%08x\n",
              tag,
-             readl(d->bar1 + 0x800),
-             readl(d->bar1 + 0x804),
-             readl(d->bar1 + 0x80C));
+             readl(c985_bar1(d) + 0x800),
+             readl(c985_bar1(d) + 0x804),
+             readl(c985_bar1(d) + 0x80C));
     dev_info(&d->pdev->dev, "[%s] MAILBOX: 0x6C8=0x%08x 0x6CC=0x%08x 0x6FC=0x%08x\n",
              tag,
-             readl(d->bar1 + 0x6C8),
-             readl(d->bar1 + 0x6CC),
-             readl(d->bar1 + 0x6FC));
+             readl(c985_bar1(d) + 0x6C8),
+             readl(c985_bar1(d) + 0x6CC),
+             readl(c985_bar1(d) + 0x6FC));
     dev_info(&d->pdev->dev, "[%s] ARM: RESET=0x%08x BOOT=0x%08x CTRL=0x%08x\n",
              tag,
-             readl(d->bar1 + 0x800),
-             readl(d->bar1 + 0x80C),
-             readl(d->bar1 + 0x00));
+             readl(c985_bar1(d) + 0x800),
+             readl(c985_bar1(d) + 0x80C),
+             readl(c985_bar1(d) + 0x00));
 }
 
 
@@ -113,18 +112,16 @@ static int codec_initialize_memory(struct c985_poc *d)
     u32 local_1c, local_18, local_20, local_24, local_28;
     int ret;
 
-
-
     local_1c = 7;
     local_18 = 2;
     local_20 = 0x20007;
 
     dev_dbg(&d->pdev->dev, "Initial: local_1c=%u local_18=%u local_20=0x%08x\n",
-             local_1c, local_18, local_20);
+            local_1c, local_18, local_20);
 
     /* Write initial value to 0xf14 */
     dev_dbg(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
-    writel(local_20, d->bar1 + 0x0f14);
+    writel(local_20, c985_bar1(d) + 0x0f14);
 
     dev_vdbg(&d->pdev->dev, "CPR write addr=0x0 val=0x%08x\n", local_20);
     ret = cpr_write(d, 0, local_20);
@@ -162,7 +159,7 @@ static int codec_initialize_memory(struct c985_poc *d)
     dev_vdbg(&d->pdev->dev, "Row detect result: read=0x%08x local_1c=%u local_20=0x%08x\n",
              local_24, local_1c, local_20);
     dev_vdbg(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
-    writel(local_20, d->bar1 + 0x0f14);
+    writel(local_20, c985_bar1(d) + 0x0f14);
 
     /* Column address detection */
 
@@ -178,7 +175,7 @@ static int codec_initialize_memory(struct c985_poc *d)
         u32 val = local_18 - 1;
 
         dev_dbg(&d->pdev->dev, "Col loop: local_18=%u addr=0x%08x val=%u\n",
-                 local_18, addr, val);
+                local_18, addr, val);
 
         ret = cpr_write(d, addr, val);
         if (ret) {
@@ -200,64 +197,64 @@ static int codec_initialize_memory(struct c985_poc *d)
     dev_vdbg(&d->pdev->dev, "Col detect result: read=0x%08x local_18=%u local_20=0x%08x\n",
              local_24, local_18, local_20);
     dev_vdbg(&d->pdev->dev, "Writing 0xf14 = 0x%08x\n", local_20);
-    writel(local_20, d->bar1 + 0x0f14);
+    writel(local_20, c985_bar1(d) + 0x0f14);
 
     /* Final register configuration */
 
-    local_28 = readl(d->bar1 + 0x0f1c);
+    local_28 = readl(c985_bar1(d) + 0x0f1c);
     dev_dbg(&d->pdev->dev, "Read 0xf1c = 0x%08x\n", local_28);
     dev_dbg(&d->pdev->dev, "Writing 0xf1c = 0x%08x\n", local_28 & 0xfffffcff);
-    writel(local_28 & 0xfffffcff, d->bar1 + 0x0f1c);
+    writel(local_28 & 0xfffffcff, c985_bar1(d) + 0x0f1c);
 
     dev_dbg(&d->pdev->dev, "Writing memory controller registers:\n");
     dev_dbg(&d->pdev->dev, "  0xf04 = 0x0d03110b\n");
-    writel(0x0d03110b, d->bar1 + 0x0f04);
+    writel(0x0d03110b, c985_bar1(d) + 0x0f04);
 
     dev_dbg(&d->pdev->dev, "  0xf08 = 0x00000003\n");
-    writel(0x00000003, d->bar1 + 0x0f08);
+    writel(0x00000003, c985_bar1(d) + 0x0f08);
 
     dev_dbg(&d->pdev->dev, "  0xf40 = 0x00000002\n");
-    writel(0x00000002, d->bar1 + 0x0f40);
+    writel(0x00000002, c985_bar1(d) + 0x0f40);
 
     dev_dbg(&d->pdev->dev, "  0xf10 = 0x05140080\n");
-    writel(0x05140080, d->bar1 + 0x0f10);
+    writel(0x05140080, c985_bar1(d) + 0x0f10);
 
     dev_dbg(&d->pdev->dev, "  0xf18 = 0x00000001\n");
-    writel(0x00000001, d->bar1 + 0x0f18);
+    writel(0x00000001, c985_bar1(d) + 0x0f18);
 
     dev_dbg(&d->pdev->dev, "Waiting 100ms for memory stabilization...\n");
     msleep(100);
-
 
     {
         u32 test_val;
         cpr_write(d, 0, 0xAAAAAAAA);
         cpr_read(d, 0, &test_val);
         dev_dbg(&d->pdev->dev,
-                 "CPR[0x0] = 0x%08x (expect 0xAAAAAAAA) %s\n",
-                 test_val, test_val == 0xAAAAAAAA ? "OK" : "FAIL");
+                "CPR[0x0] = 0x%08x (expect 0xAAAAAAAA) %s\n",
+                test_val, test_val == 0xAAAAAAAA ? "OK" : "FAIL");
 
         cpr_write(d, 0x1000, 0x55555555);
         cpr_read(d, 0x1000, &test_val);
         dev_dbg(&d->pdev->dev,
-                 "CPR[0x1000] = 0x%08x (expect 0x55555555) %s\n",
-                 test_val, test_val == 0x55555555 ? "OK" : "FAIL");
+                "CPR[0x1000] = 0x%08x (expect 0x55555555) %s\n",
+                test_val, test_val == 0x55555555 ? "OK" : "FAIL");
 
         dev_dbg(&d->pdev->dev,
-                 "MEMCTL: 0xf04=0x%08x 0xf08=0x%08x 0xf10=0x%08x\n",
-                 readl(d->bar1 + 0xf04),
-                 readl(d->bar1 + 0xf08),
-                 readl(d->bar1 + 0xf10));
+                "MEMCTL: 0xf04=0x%08x 0xf08=0x%08x 0xf10=0x%08x\n",
+                readl(c985_bar1(d) + 0xf04),
+                readl(c985_bar1(d) + 0xf08),
+                readl(c985_bar1(d) + 0xf10));
         dev_dbg(&d->pdev->dev,
-                 "MEMCTL: 0xf14=0x%08x 0xf18=0x%08x 0xf1c=0x%08x 0xf40=0x%08x\n",
-                 readl(d->bar1 + 0xf14),
-                 readl(d->bar1 + 0xf18),
-                 readl(d->bar1 + 0xf1c),
-                 readl(d->bar1 + 0xf40));
+                "MEMCTL: 0xf14=0x%08x 0xf18=0x%08x 0xf1c=0x%08x 0xf40=0x%08x\n",
+                readl(c985_bar1(d) + 0xf14),
+                readl(c985_bar1(d) + 0xf18),
+                readl(c985_bar1(d) + 0xf1c),
+                readl(c985_bar1(d) + 0xf40));
     }
 
     return 0;
 }
+
 /* -----------------------------------------------------------------------
  * AO/VO switches
  * --------------------------------------------------------------------- */
@@ -289,34 +286,33 @@ void cqlcodec_load_default_settings(struct c985_poc *d)
 {
     dev_vdbg(&d->pdev->dev, "CQLCodec: load default settings\n");
 
-    d->enc_reg_message             = ENC_REG_MESSAGE;
-    d->enc_reg_system_control      = ENC_REG_SYSTEM_CONTROL;
-    d->enc_reg_picture_resolution  = ENC_REG_PICTURE_RESOLUTION;
-    d->enc_reg_input_control       = ENC_REG_INPUT_CONTROL;
-    d->enc_reg_rate_control        = ENC_REG_RATE_CONTROL;
-    d->enc_reg_bit_rate            = ENC_REG_BIT_RATE;
-    d->enc_reg_filter_control      = ENC_REG_FILTER_CONTROL;
-    d->enc_reg_gop_loop_filter     = ENC_REG_GOP_LOOP_FILTER;
-    d->enc_reg_out_pic_resolution  = ENC_REG_OUT_PIC_RESOLUTION;
-    d->enc_reg_et_control          = ENC_REG_ET_CONTROL;
-    d->enc_reg_block_size          = ENC_REG_BLOCK_SIZE;
-    d->enc_reg_audio_control_param = ENC_REG_AUDIO_CONTROL_PARAM;
-    d->enc_reg_audio_control_ex    = ENC_REG_AUDIO_CONTROL_EX;
+    d->codec.m_ENC_REG_MESSAGE             = ENC_REG_MESSAGE;
+    d->codec.m_ENC_REG_SYSTEM_CONTROL      = ENC_REG_SYSTEM_CONTROL;
+    d->codec.m_ENC_REG_PICTURE_RESOLUTION  = ENC_REG_PICTURE_RESOLUTION;
+    d->codec.m_ENC_REG_INPUT_CONTROL       = ENC_REG_INPUT_CONTROL;
+    d->codec.m_ENC_REG_RATE_CONTROL        = ENC_REG_RATE_CONTROL;
+    d->codec.m_ENC_REG_BIT_RATE            = ENC_REG_BIT_RATE;
+    d->codec.m_ENC_REG_FILTER_CONTROL      = ENC_REG_FILTER_CONTROL;
+    d->codec.m_ENC_REG_GOP_LOOP_FILTER     = ENC_REG_GOP_LOOP_FILTER;
+    d->codec.m_ENC_REG_OUT_PIC_RESOLUTION  = ENC_REG_OUT_PIC_RESOLUTION;
+    d->codec.m_ENC_REG_ET_CONTROL          = ENC_REG_ET_CONTROL;
+    d->codec.m_ENC_REG_BLOCK_SIZE          = ENC_REG_BLOCK_SIZE;
+    d->codec.m_ENC_REG_AUDIO_CONTROL_PARAM = ENC_REG_AUDIO_CONTROL_PARAM;
+    d->codec.m_ENC_REG_AUDIO_CONTROL_EX    = ENC_REG_AUDIO_CONTROL_EX;
 
-    d->vo_enable       = 1;
-    d->vou_mode        = 0;
-    d->vou_start_pixel = 1;
-    d->vou_start_line  = 0;
+    d->codec.m_VOEnable       = 1;
+    d->codec.m_VOUMode        = 0;
+    d->codec.m_VOUStartPixel  = 1;
+    d->codec.m_VOUStartLine   = 0;
 
-    d->ver_fw_api = 1;
+    d->codec.m_VerFwAPI = 1;
 
+    d->codec.m_AOEnable    = 1;
+    d->codec.m_AOControls  = DEFAULT_AO_CONTROLS;
+    d->codec.m_AudControls = DEFAULT_AUD_CONTROLS;
 
-    d->ao_enable    = 1;
-    d->ao_controls  = DEFAULT_AO_CONTROLS;
-    d->aud_controls = DEFAULT_AUD_CONTROLS;
-
-    d->ai_volume = 8;
-    d->ao_volume = 8;
+    d->codec.m_AIVolume = 8;
+    d->codec.m_AOVolume = 8;
 
     dev_dbg(&d->pdev->dev, "CQLCodec: defaults loaded\n");
 }
@@ -341,7 +337,7 @@ static void dma_completion_handler(struct work_struct *work)
     dev_dbg(&d->pdev->dev, "DMA work: status=0x%08x\n", d->dma_interrupt_status);
 
     /* Process each completed DMA channel */
-    for (i = 0; i < d->num_dma_channels; i++) {
+    for (i = 0; i < d->pcie.m_NumDmaAvailable; i++) {
         if (d->dma_interrupt_status & (1 << i)) {
             dev_dbg(&d->pdev->dev, "DMA channel %d (engine %d) completed\n",
                     i, d->dma_engine_idx[i]);
@@ -388,14 +384,14 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
 
     d->pdev = pdev;
 
-    d->bar0 = pci_ioremap_bar(pdev, 0);
-    if (!d->bar0) {
+    d->pcie.pRegisters = pci_ioremap_bar(pdev, 0);
+    if (!d->pcie.pRegisters) {
         ret = -ENOMEM;
         goto err_region;
     }
 
-    d->bar1 = pci_ioremap_bar(pdev, C985_BAR_MMIO);
-    if (!d->bar1) {
+    d->pcie.pRegistersEx = pci_ioremap_bar(pdev, C985_BAR_MMIO);
+    if (!d->pcie.pRegistersEx) {
         ret = -ENOMEM;
         goto err_bar1;
     }
@@ -403,7 +399,7 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
     pci_set_drvdata(pdev, d);
 
     /* Load Windows-compatible configuration */
-    c985_get_init_data(d);
+    CDEVICE__getInitData(d);
 
     /* INIT_WORK(&d->irq_work, cqlcodec_interrupt_handler); */
     INIT_WORK(&d->dma_work, dma_completion_handler);
@@ -413,13 +409,13 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
     spin_lock_init(&d->irq_lock);
 
 
-    dev_dbg(&pdev->dev, "reg 0x00 = 0x%08x\n", readl(d->bar1 + 0x00));
+    dev_dbg(&pdev->dev, "reg 0x00 = 0x%08x\n", readl(c985_bar1(d) + 0x00));
     // ...
 
     /* Load default settings */
     cqlcodec_load_default_settings(d);
 
-    /* ⭐ Step 1: QPHCI_Init - NOW USES d->access_mode, d->chip_type, etc! */
+    /* Step 1: QPHCI_Init */
     ret = qphci_init(d);
     if (ret)
         goto err_out;
@@ -443,9 +439,9 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
 
     cpciectl_enable_interrupts(d);
 
-    /* ⭐ Use the configured values */
-    cqlcodec_ao_switch(d, d->ao_enable);  // Not !ao_enable
-    cqlcodec_vo_switch(d, d->vo_enable);  // Not !vo_enable
+    /* Use the configured values */
+    cqlcodec_ao_switch(d, d->codec.m_AOEnable);
+    cqlcodec_vo_switch(d, d->codec.m_VOEnable);
 
     dev_info(&pdev->dev, "CQLCodec init complete\n");
     return 0;
@@ -456,15 +452,16 @@ int cqlcodec_init_device(struct pci_dev *pdev, const struct pci_device_id *id)
     /* cancel_work_sync(&d->frame_work); */
     if (d->irq_registered)
         free_irq(d->pdev->irq, d);
-    iounmap(d->bar1);
+    iounmap(d->pcie.pRegistersEx);
     err_bar1:
-    iounmap(d->bar0);
+    iounmap(d->pcie.pRegisters);
     err_region:
     pci_release_region(pdev, C985_BAR_MMIO);
     err_bar0:
     pci_release_region(pdev, 0);
     return ret;
 }
+
 /* -----------------------------------------------------------------------
  * Device remove
  * --------------------------------------------------------------------- */
@@ -480,18 +477,18 @@ void cqlcodec_remove_device(struct pci_dev *pdev)
     /* cancel_work_sync(&d->irq_work); */
     /* cancel_work_sync(&d->frame_work); */
 
-    if (d->bar0) {
+    if (d->pcie.pRegisters) {
         /* Disable interrupt generation */
-        u32 val = readl(d->bar0 + PED_DMA_COMMON_CONTROL_STATUS);
-        writel(val & ~PED_GLOBAL_INT_ENABLE, d->bar0 + PED_DMA_COMMON_CONTROL_STATUS);
+        u32 val = readl(c985_bar0(d) + PED_DMA_COMMON_CONTROL_STATUS);
+        writel(val & ~PED_GLOBAL_INT_ENABLE, c985_bar0(d) + PED_DMA_COMMON_CONTROL_STATUS);
     }
 
-    if (d->bar1) {
+    if (d->pcie.pRegistersEx) {
         /* Clear pending status */
-        writel(readl(d->bar1 + REG_PCI_INT_STATUS), d->bar1 + REG_PCI_INT_STATUS);
-        writel(0x00070000, d->bar1 + 0x804);
-        writel(0, d->bar1 + 0x6C8);
-        writel(0, d->bar1 + 0x6CC);
+        writel(readl(c985_bar1(d) + REG_PCI_INT_STATUS), c985_bar1(d) + REG_PCI_INT_STATUS);
+        writel(0x00070000, c985_bar1(d) + 0x804);
+        writel(0, c985_bar1(d) + 0x6C8);
+        writel(0, c985_bar1(d) + 0x6CC);
     }
 
     if (d->irq_registered) {
@@ -499,42 +496,24 @@ void cqlcodec_remove_device(struct pci_dev *pdev)
         d->irq_registered = 0;
     }
 
-    if (d->bar1) {
-        iounmap(d->bar1);
-        d->bar1 = NULL;
+    if (d->pcie.pRegistersEx) {
+        iounmap(d->pcie.pRegistersEx);
+        d->pcie.pRegistersEx = NULL;
     }
 
-    if (d->bar0) {
-        iounmap(d->bar0);
-        d->bar0 = NULL;
+    if (d->pcie.pRegisters) {
+        iounmap(d->pcie.pRegisters);
+        d->pcie.pRegisters = NULL;
     }
 
     pci_release_region(pdev, C985_BAR_MMIO);
     pci_release_region(pdev, 0);
 
     dev_info(&pdev->dev, "hardware shutdown complete\n");
-
 }
+
 /* -----------------------------------------------------------------------
- * Firmware download — CORRECTED
- *
- * Windows driver order (from CQLCodec_FWDownloadAll):
- *   ResetArm(0)
- *   QPHCI_ReInit
- *   InitializeMemory
- *   AO/VO switch, GPIO
- *   delay 50ms
- *   Read reg 0x00, clear bit 13, write back (for audio FW)
- *   Upload AUDIO FW to 0x100000 (param_5=0x100000, do_reset=0)
- *   delay 1ms
- *   Upload VIDEO FW to 0x000000 (param_5=0, do_reset=0)
- *   - Reads QPSOS from firmware BUFFER (host memory), not card RAM
- *   - Writes fw_fixed_mode, fw_int_mode to card RAM via MemoryWrite
- *   - Sets PLLs
- *   - Clears 0x6CC
- *   delay 500us
- *   ResetArm(1)
- *   delay 150ms
+ * Firmware download
  * --------------------------------------------------------------------- */
 // CQLCodec_FWDownloadAll
 int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
@@ -545,6 +524,7 @@ int cqlcodec_fw_download(struct c985_poc *d, int do_reset)
 
     return firmware_download_all(d);
 }
+
 static int cqlcodec_reset(struct c985_poc *d)
 {
     int ret;
@@ -552,8 +532,8 @@ static int cqlcodec_reset(struct c985_poc *d)
     dev_info(&d->pdev->dev, "CQLCodec_Reset()\n");
 
     /* 1-2. Clear mailboxes */
-    writel(0, d->bar1 + 0x6CC);
-    writel(0, d->bar1 + 0x6C8);
+    writel(0, c985_bar1(d) + 0x6CC);
+    writel(0, c985_bar1(d) + 0x6C8);
 
     /* 3. Skip AllocEncodeTask(0) for now */
 
@@ -566,10 +546,10 @@ static int cqlcodec_reset(struct c985_poc *d)
     /* Skip on reload, only needed on fresh boot */
 
     /* 6-8. AO/VO/GPIO */
-    cqlcodec_ao_switch(d, !d->ao_enable);
-    cqlcodec_vo_switch(d, !d->vo_enable);
-    writel(0, d->bar1 + REG_GPIO_DIR);
-    writel(0, d->bar1 + REG_GPIO_VAL);
+    cqlcodec_ao_switch(d, !d->codec.m_AOEnable);
+    cqlcodec_vo_switch(d, !d->codec.m_VOEnable);
+    writel(0, c985_bar1(d) + REG_GPIO_DIR);
+    writel(0, c985_bar1(d) + REG_GPIO_VAL);
 
     /* 9. Delay */
     msleep(5);
@@ -578,5 +558,3 @@ static int cqlcodec_reset(struct c985_poc *d)
 
     return 0;
 }
-
-

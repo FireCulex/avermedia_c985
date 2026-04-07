@@ -5,38 +5,35 @@
 #include <linux/delay.h>
 #include <linux/pci.h>
 
+#include "structs.h"
 #include "avermedia_c985.h"
 #include "i2c_bitbang.h"
 
-#define REG_GPIO_DIR    0x0610
-#define REG_GPIO_VAL    0x0614
-#define REG_GPIO_IN     0x0618
-
 void gpio_drive_low(struct c985_poc *d, int pin)
 {
-    u32 dir = readl(d->bar1 + REG_GPIO_DIR);
-    u32 val = readl(d->bar1 + REG_GPIO_VAL);
+    u32 dir = readl(c985_bar1(d) + REG_GPIO_DIR);
+    u32 val = readl(c985_bar1(d) + REG_GPIO_VAL);
 
     dir |= BIT(pin);
     val &= ~BIT(pin);
 
-    writel(dir, d->bar1 + REG_GPIO_DIR);
-    writel(val, d->bar1 + REG_GPIO_VAL);
+    writel(dir, c985_bar1(d) + REG_GPIO_DIR);
+    writel(val, c985_bar1(d) + REG_GPIO_VAL);
 }
 
 void gpio_release(struct c985_poc *d, int pin)
 {
-    u32 dir = readl(d->bar1 + REG_GPIO_DIR);
+    u32 dir = readl(c985_bar1(d) + REG_GPIO_DIR);
     dir &= ~BIT(pin);
-    writel(dir, d->bar1 + REG_GPIO_DIR);
+    writel(dir, c985_bar1(d) + REG_GPIO_DIR);
 }
 
 static int gpio_read(struct c985_poc *d, int pin)
 {
-    u32 dir = readl(d->bar1 + REG_GPIO_DIR);
+    u32 dir = readl(c985_bar1(d) + REG_GPIO_DIR);
     dir &= ~BIT(pin);
-    writel(dir, d->bar1 + REG_GPIO_DIR);
-    return (readl(d->bar1 + REG_GPIO_IN) & BIT(pin)) ? 1 : 0;
+    writel(dir, c985_bar1(d) + REG_GPIO_DIR);
+    return (readl(c985_bar1(d) + REG_GPIO_IN) & BIT(pin)) ? 1 : 0;
 }
 
 static inline void i2c_delay(void)

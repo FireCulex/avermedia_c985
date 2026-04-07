@@ -5,12 +5,10 @@
 #include <linux/delay.h>
 #include <linux/pci.h>
 
+#include "structs.h"
 #include "avermedia_c985.h"
 #include "i2c_bitbang.h"
 #include "ti3101.h"
-
-#define REG_GPIO_DIR    0x0610
-#define REG_GPIO_VAL    0x0614
 
 static int ti3101_write(struct c985_poc *d, u8 reg, u8 val)
 {
@@ -49,18 +47,18 @@ void ti3101_hw_reset(struct c985_poc *d)
 
     dev_vdbg(&d->pdev->dev, "TI3101: HwReset\n");
 
-    dir = readl(d->bar1 + REG_GPIO_DIR);
+    dir = readl(c985_bar1(d) + REG_GPIO_DIR);
     dir |= BIT(GPIO_TI3101_RST);
-    writel(dir, d->bar1 + REG_GPIO_DIR);
+    writel(dir, c985_bar1(d) + REG_GPIO_DIR);
     msleep(10);
 
-    val = readl(d->bar1 + REG_GPIO_VAL);
+    val = readl(c985_bar1(d) + REG_GPIO_VAL);
     val &= ~BIT(GPIO_TI3101_RST);
-    writel(val, d->bar1 + REG_GPIO_VAL);
+    writel(val, c985_bar1(d) + REG_GPIO_VAL);
     msleep(10);
 
     val |= BIT(GPIO_TI3101_RST);
-    writel(val, d->bar1 + REG_GPIO_VAL);
+    writel(val, c985_bar1(d) + REG_GPIO_VAL);
 
     dev_vdbg(&d->pdev->dev, "TI3101: HwReset done\n");
 }

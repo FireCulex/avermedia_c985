@@ -5,6 +5,7 @@
 #include <linux/delay.h>
 #include <linux/pci.h>
 
+#include "structs.h"
 #include "avermedia_c985.h"
 #include "i2c_bitbang.h"
 #include "nuc100.h"
@@ -180,7 +181,7 @@ int nuc100_init(struct c985_poc *d)
 
     dev_info(&d->pdev->dev, "NUC100: init\n");
 
-    d->mcu_addr = NUC100_I2C_ADDR >> 1;
+    d->m_McuAddr = NUC100_I2C_ADDR >> 1;
 
     ret = nuc100_check_device(d);
     if (ret)
@@ -200,7 +201,7 @@ int nuc100_get_hdmi_status(struct c985_poc *d)
     /* Rate limit: minimum 50ms between checks (like Windows driver) */
     if (last_check && time_before(now, last_check + msecs_to_jiffies(50))) {
         /* Return cached result or just "unknown" */
-        return d->hdmi_signal_cached;
+        return d->hdmi_valid;
     }
     last_check = now;
 
@@ -223,12 +224,12 @@ int nuc100_get_hdmi_status(struct c985_poc *d)
         return -EIO;
 
     if (status & 0x04) {
-        d->hdmi_signal_cached = 1;
+        d->hdmi_valid = 1;
         dev_info(&d->pdev->dev, "HDMI: signal detected (status=0x%02x)\n", status);
         return 1;
     }
 
-    d->hdmi_signal_cached = 0;
+    d->hdmi_valid = 0;
     dev_info(&d->pdev->dev, "HDMI: no signal (status=0x%02x)\n", status);
     return 0;
 }

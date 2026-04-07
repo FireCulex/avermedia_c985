@@ -2,6 +2,7 @@
 #include <linux/delay.h>
 #include <linux/pci.h>
 
+#include "structs.h"
 #include "avermedia_c985.h"
 #include "qpfwapi.h"
 #include "qpfwencapi.h"
@@ -23,8 +24,8 @@ int QPFWCODECAPI_SystemOpen(struct c985_poc *d, u32 task_id, u32 function)
     int ret;
 
     dev_dbg(&d->pdev->dev,
-             "QPFWCODECAPI_SystemOpen: taskId=%u function=0x%08x\n",
-             task_id, function);
+            "QPFWCODECAPI_SystemOpen: taskId=%u function=0x%08x\n",
+            task_id, function);
 
     /* Wait for mailbox ready */
     ret = QPFWAPI_MailboxReady(d, 500);
@@ -34,7 +35,7 @@ int QPFWCODECAPI_SystemOpen(struct c985_poc *d, u32 task_id, u32 function)
     }
 
     /* Write function parameter to 0x6F8 */
-    writel(function, d->bar1 + REG_TO_ARM_PARAM);
+    writel(function, c985_bar1(d) + REG_TO_ARM_PARAM);
     wmb();
 
     /* Build ARM message: (task_id << 16) | 0xF1 */
@@ -55,10 +56,10 @@ int QPFWCODECAPI_SystemOpen(struct c985_poc *d, u32 task_id, u32 function)
     }
 
     /* Read response status */
-    status = readl(d->bar1 + REG_FROM_ARM_MSG_STATUS);
+    status = readl(c985_bar1(d) + REG_FROM_ARM_MSG_STATUS);
 
     dev_dbg(&d->pdev->dev,
-             "QPFWCODECAPI_SystemOpen: complete, response=0x%08x\n", status);
+            "QPFWCODECAPI_SystemOpen: complete, response=0x%08x\n", status);
 
     QPFWAPI_MailboxDone(d);
 
@@ -94,13 +95,14 @@ int QPFWCODECAPI_SystemClose(struct c985_poc *d, u32 task_id)
         return ret;
     }
 
-    status = readl(d->bar1 + REG_FROM_ARM_MSG_STATUS);
+    status = readl(c985_bar1(d) + REG_FROM_ARM_MSG_STATUS);
 
     dev_info(&d->pdev->dev,
              "QPFWCODECAPI_SystemClose: complete, response=0x%08x\n", status);
 
     return 0;
 }
+
 /*
  * QPFWCODECAPI_SystemLink - Link video/audio inputs to outputs
  * @d: device structure
@@ -167,7 +169,7 @@ int QPFWCODECAPI_SystemLink(struct c985_poc *d, u32 task_id,
             "QPFWCODECAPI_SystemLink: param=0x%08x\n", param);
 
     /* Write parameter to 0x6F8 */
-    writel(param, d->bar1 + REG_TO_ARM_PARAM);
+    writel(param, c985_bar1(d) + REG_TO_ARM_PARAM);
     wmb();
 
     /* Build ARM message: (task_id << 16) | 0xF2 */
@@ -190,7 +192,7 @@ int QPFWCODECAPI_SystemLink(struct c985_poc *d, u32 task_id,
     }
 
     /* Read response */
-    status = readl(d->bar1 + REG_FROM_ARM_MSG_STATUS);
+    status = readl(c985_bar1(d) + REG_FROM_ARM_MSG_STATUS);
 
     dev_info(&d->pdev->dev,
              "QPFWCODECAPI_SystemLink: complete, response=0x%08x\n", status);

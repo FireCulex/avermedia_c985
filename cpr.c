@@ -5,6 +5,7 @@
 #include <linux/delay.h>
 #include <linux/pci.h>
 
+#include "structs.h"
 #include "avermedia_c985.h"
 #include "cpr.h"
 
@@ -14,25 +15,25 @@ int cpr_write(struct c985_poc *d, u32 card_addr, u32 val)
     unsigned long timeout;
     int loop_count = 0;
 
-    done_code = (d->chip_ver == CPR_CHIPVER_SPECIAL) ? 0x00 : 0x42;
+    done_code = (d->codec.m_ChipVersion == CPR_CHIPVER_SPECIAL) ? 0x00 : 0x42;
     addr_field = ((card_addr >> 2) & 0x7ffffff) << 2;
 
     dev_dbg(&d->pdev->dev, "CPR_WR: addr=0x%08x val=0x%08x done_code=0x%02x\n",
             card_addr, val, done_code);
 
-    writel(addr_field, d->bar1 + REG_CPR_WR_ADDR);
-    ctl = readl(d->bar1 + REG_CPR_WR_CTL);
+    writel(addr_field, c985_bar1(d) + REG_CPR_WR_ADDR);
+    ctl = readl(c985_bar1(d) + REG_CPR_WR_CTL);
 
     dev_dbg(&d->pdev->dev, "CPR_WR: initial ctl=0x%08x\n", ctl);
 
     ctl &= 0xffff0003;
     ctl |= 0x4;
-    writel(ctl, d->bar1 + REG_CPR_WR_CTL);
-    writel(val, d->bar1 + REG_CPR_WR_DATA);
+    writel(ctl, c985_bar1(d) + REG_CPR_WR_CTL);
+    writel(val, c985_bar1(d) + REG_CPR_WR_DATA);
 
     timeout = jiffies + msecs_to_jiffies(CPR_TIMEOUT_MS);
     for (;;) {
-        tmp = readl(d->bar1 + REG_CPR_WR_CTL);
+        tmp = readl(c985_bar1(d) + REG_CPR_WR_CTL);
         status = (tmp >> 18) & 0xff;
 
         loop_count++;
@@ -61,24 +62,24 @@ int cpr_read(struct c985_poc *d, u32 card_addr, u32 *out)
     unsigned long timeout;
     int loop_count = 0;
 
-    busy_sentinel = (d->chip_ver == CPR_CHIPVER_SPECIAL) ? 0x3f : 0xff;
+    busy_sentinel = (d->codec.m_ChipVersion == CPR_CHIPVER_SPECIAL) ? 0x3f : 0xff;
     addr_field = ((card_addr >> 2) & 0x7ffffff) << 2;
 
     dev_dbg(&d->pdev->dev, "CPR_RD: addr=0x%08x busy_sentinel=0x%02x\n",
             card_addr, busy_sentinel);
 
-    writel(addr_field, d->bar1 + REG_CPR_RD_ADDR);
-    ctl = readl(d->bar1 + REG_CPR_RD_CTL);
+    writel(addr_field, c985_bar1(d) + REG_CPR_RD_ADDR);
+    ctl = readl(c985_bar1(d) + REG_CPR_RD_CTL);
 
     dev_dbg(&d->pdev->dev, "CPR_RD: initial ctl=0x%08x\n", ctl);
 
     ctl &= 0xffff0003;
     ctl |= 0x10;
-    writel(ctl, d->bar1 + REG_CPR_RD_CTL);
+    writel(ctl, c985_bar1(d) + REG_CPR_RD_CTL);
 
     timeout = jiffies + msecs_to_jiffies(CPR_TIMEOUT_MS);
     for (;;) {
-        tmp = readl(d->bar1 + REG_CPR_RD_CTL);
+        tmp = readl(c985_bar1(d) + REG_CPR_RD_CTL);
         status = (tmp >> 18) & 0x3f;
 
         loop_count++;
@@ -97,10 +98,10 @@ int cpr_read(struct c985_poc *d, u32 card_addr, u32 *out)
         udelay(10);
     }
 
-    *out = readl(d->bar1 + REG_CPR_RD_DATA);
-    readl(d->bar1 + REG_CPR_RD_DATA);
-    readl(d->bar1 + REG_CPR_RD_DATA);
-    readl(d->bar1 + REG_CPR_RD_DATA);
+    *out = readl(c985_bar1(d) + REG_CPR_RD_DATA);
+    readl(c985_bar1(d) + REG_CPR_RD_DATA);
+    readl(c985_bar1(d) + REG_CPR_RD_DATA);
+    readl(c985_bar1(d) + REG_CPR_RD_DATA);
 
     dev_dbg(&d->pdev->dev, "CPR_RD: complete after %d loops, val=0x%08x\n",
             loop_count, *out);

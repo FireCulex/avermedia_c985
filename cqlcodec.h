@@ -6,11 +6,6 @@
 
 struct c985_poc;
 
-/* Bus types */
-#define QPHCI_BUS_USB           0
-#define QPHCI_BUS_PCI           1
-#define QPHCI_BUS_201_EMULATION 2
-
 /* Encoder register offsets (chip_type & 0xe != 0) */
 #define ENC_REG_MESSAGE             0x6fc
 #define ENC_REG_SYSTEM_CONTROL      0x6f8

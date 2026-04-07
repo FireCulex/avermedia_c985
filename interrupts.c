@@ -1,5 +1,6 @@
 #include <linux/interrupt.h>
 #include <linux/pci.h>
+#include "structs.h"
 #include "avermedia_c985.h"
 #include "interrupts.h"
 
@@ -26,19 +27,19 @@ static irqreturn_t pci_interrupt_service(int irq, void *dev_id)
         dev_dbg(&d->pdev->dev, "IRQ: handler #%d\n", call_count);
 
     /* Check BAR0 + 0x8030, bit 30 (0x40000000) */
-    reg_8030 = readl(d->bar0 + 0x8030);
+    reg_8030 = readl(c985_bar0(d) + 0x8030);
     if (call_count <= 10)
         dev_dbg(&d->pdev->dev, "IRQ: reg_8030=0x%08x\n", reg_8030);
 
     if (reg_8030 & 0x40000000) {
-        writel(0x40000000, d->bar0 + 0x8030);
+        writel(0x40000000, c985_bar0(d) + 0x8030);
         dev_dbg(&d->pdev->dev, "IRQ: BAR0[0x8030] bit30 CLEARED\n");
         ret = IRQ_HANDLED;
     }
 
     /* Check per-DMA-channel status */
-    for (i = 0; i < d->num_dma_channels; i++) {
-        void __iomem *channel_base = d->bar0 + (i * PED_DMA_ENGINE_SIZE);
+    for (i = 0; i < d->pcie.m_NumDmaAvailable; i++) {
+        void __iomem *channel_base = c985_bar0(d) + (i * PED_DMA_ENGINE_SIZE);
         channel_status = readl(channel_base + PED_DMA_ENGINE_CONTROL_STATUS);
 
         if (call_count <= 10)
@@ -56,6 +57,7 @@ static irqreturn_t pci_interrupt_service(int irq, void *dev_id)
 
     return ret;
 }
+
 /*
  * cpciectl_enable_interrupts
  *
@@ -68,9 +70,9 @@ void cpciectl_enable_interrupts(struct c985_poc *d)
 {
     u32 val;
 
-    val = readl(d->bar0 + PED_DMA_COMMON_CONTROL_STATUS);
+    val = readl(c985_bar0(d) + PED_DMA_COMMON_CONTROL_STATUS);
     val |= PED_GLOBAL_INT_ENABLE;
-    writel(val, d->bar0 + PED_DMA_COMMON_CONTROL_STATUS);
+    writel(val, c985_bar0(d) + PED_DMA_COMMON_CONTROL_STATUS);
 }
 
 /*
@@ -85,9 +87,9 @@ void cpciectl_disable_interrupts(struct c985_poc *d)
 {
     u32 val;
 
-    val = readl(d->bar0 + PED_DMA_COMMON_CONTROL_STATUS);
+    val = readl(c985_bar0(d) + PED_DMA_COMMON_CONTROL_STATUS);
     val &= PED_GLOBAL_INT_DISABLE_MASK;
-    writel(val, d->bar0 + PED_DMA_COMMON_CONTROL_STATUS);
+    writel(val, c985_bar0(d) + PED_DMA_COMMON_CONTROL_STATUS);
 }
 
 /*

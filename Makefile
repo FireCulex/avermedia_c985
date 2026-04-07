@@ -9,10 +9,8 @@ $(MODULE_NAME)-objs := \
 	cqlcodec.o \
 	cpr.o \
 	i2c_bitbang.o \
-	ql201_i2c.o \
 	ti3101.o \
 	nuc100.o \
-	diag.o \
 	project.o \
 	qphci.o \
 	qpfwapi.o \

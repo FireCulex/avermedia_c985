@@ -14,6 +14,7 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 
+#include "structs.h"
 #include "avermedia_c985.h"
 #include "nuc100.h"
 #include "ti3101.h"
@@ -21,10 +22,6 @@
 #include "qpfwencapi.h"
 #include "i2c_bitbang.h"
 #include "qpfwapi.h"
-
-/* GPIO registers */
-#define REG_GPIO_DIR    0x0610
-#define REG_GPIO_VAL    0x0614
 
 /* NUC100 GPIOs */
 #define NUC100_RST_GPIO 15
@@ -36,7 +33,7 @@ static int init_hardware(struct c985_poc *d)
 {
     int ret;
 
-    d->mcu_addr = NUC100_I2C_ADDR >> 1;
+    d->m_McuAddr = NUC100_I2C_ADDR >> 1;
 
     /* NUC100 reset (GPIO 15) */
     gpio_drive_low(d, NUC100_RST_GPIO);
@@ -104,18 +101,18 @@ static int wait_for_firmware_boot(struct c985_poc *d)
 
     /* Ring doorbell */
     dev_info(&d->pdev->dev, "Ringing doorbell...\n");
-    iowrite32(0x00, d->bar0 + 0x04);
+    iowrite32(0x00, c985_bar0(d) + 0x04);
     wmb();
     udelay(100);
-    iowrite32(0x01, d->bar0 + 0x04);
+    iowrite32(0x01, c985_bar0(d) + 0x04);
     wmb();
 
     /* Wait for init messages to appear */
     msleep(1000);
 
     /* Check what addresses firmware gave us */
-    u32 cmd_addr = ioread32(d->bar0 + 0x10);
-    u32 rsp_addr = ioread32(d->bar0 + 0x14);
+    u32 cmd_addr = ioread32(c985_bar0(d) + 0x10);
+    u32 rsp_addr = ioread32(c985_bar0(d) + 0x14);
     dev_vdbg(&d->pdev->dev, "cmd_addr = 0x%08x, rsp_addr = 0x%08x\n", cmd_addr, rsp_addr);
 
     /* Dump debug log */
@@ -142,10 +139,10 @@ static int wait_for_firmware_boot(struct c985_poc *d)
     cpr_write(d, cmd_addr + 0x0c, 0x00000000);
 
     /* Ring doorbell again */
-    iowrite32(0x00, d->bar0 + 0x04);
+    iowrite32(0x00, c985_bar0(d) + 0x04);
     wmb();
     udelay(100);
-    iowrite32(0x01, d->bar0 + 0x04);
+    iowrite32(0x01, c985_bar0(d) + 0x04);
     wmb();
 
     msleep(500);
@@ -193,7 +190,7 @@ static int encoder_system_open(struct c985_poc *d)
 
     /* First, find where the HCI thread expects commands */
     /* From BAR0[0x10], we saw cmd buffer addresses like 0x19xxxx */
-    u32 cmd_addr = ioread32(d->bar0 + 0x10);
+    u32 cmd_addr = ioread32(c985_bar0(d) + 0x10);
     dev_info(&d->pdev->dev, "BAR0[0x10] cmd_addr = 0x%08x\n", cmd_addr);
 
     /* Write command directly to ARM memory */
@@ -203,16 +200,16 @@ static int encoder_system_open(struct c985_poc *d)
     cpr_write(d, cmd_addr + 0x0c, 0x00000000);
 
     /* Ring doorbell again to signal new command? */
-    iowrite32(0x00, d->bar0 + 0x04);
+    iowrite32(0x00, c985_bar0(d) + 0x04);
     wmb();
     udelay(100);
-    iowrite32(0x01, d->bar0 + 0x04);
+    iowrite32(0x01, c985_bar0(d) + 0x04);
     wmb();
 
     msleep(200);
 
     /* Check response */
-    u32 rsp_addr = ioread32(d->bar0 + 0x14);
+    u32 rsp_addr = ioread32(c985_bar0(d) + 0x14);
     dev_info(&d->pdev->dev, "BAR0[0x14] rsp_addr = 0x%08x\n", rsp_addr);
 
     for (int i = 0; i < 8; i++) {
@@ -227,6 +224,7 @@ static int encoder_system_open(struct c985_poc *d)
 
     return 0;
 }
+
 /*
  * Main initialization entry point
  */
@@ -262,5 +260,3 @@ int project_c985_init(struct c985_poc *d)
     dev_info(&d->pdev->dev, "C985 initialization complete\n");
     return 0;
 }
-
-

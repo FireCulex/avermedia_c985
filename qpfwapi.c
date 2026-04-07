@@ -16,6 +16,7 @@
 
 #include <linux/io.h>
 #include <linux/delay.h>
+#include "structs.h"
 #include "avermedia_c985.h"
 #include "qpfwapi.h"
 
@@ -32,7 +33,7 @@ int QPFWAPI_MailboxReady(struct c985_poc *d, int timeout_ms)
     unsigned long deadline = jiffies + msecs_to_jiffies(timeout_ms);
 
     do {
-        val = readl(d->bar1 + REG_TO_ARM_MSG_STATUS);
+        val = readl(c985_bar1(d) + REG_TO_ARM_MSG_STATUS);
         if (!(val & 1))  /* bit 0 = 0 means READY */
             return 0;
         usleep_range(100, 200);
@@ -91,11 +92,11 @@ int QPFWAPI_SendMessageToARM(struct c985_poc *d, u32 task_id, u32 message,
     status_word = (message & 0xFFFF0000) | ((has_response ? 1 : 0) << 8) | 1;
 
     /* Write status/trigger to 0x6CC */
-    writel(status_word, d->bar1 + REG_TO_ARM_MSG_STATUS);
+    writel(status_word, c985_bar1(d) + REG_TO_ARM_MSG_STATUS);
     wmb();
 
     /* Write full message to 0x6FC */
-    writel(message, d->bar1 + REG_TO_ARM_MESSAGE);
+    writel(message, c985_bar1(d) + REG_TO_ARM_MESSAGE);
     wmb();
 
     /* Release mailbox if timeout was specified */
@@ -119,13 +120,13 @@ int QPFWAPI_GetARMMessage(struct c985_poc *d, u32 *message, u32 *status,
                           u32 *param0, u32 *param1, u32 *param2,
                           u32 *param3, u32 *param4)
 {
-    *message = readl(d->bar1 + REG_FROM_ARM_MESSAGE);
-    *status  = readl(d->bar1 + REG_FROM_ARM_MSG_STATUS);
-    *param0  = readl(d->bar1 + REG_FROM_ARM_PARAM0);
-    *param1  = readl(d->bar1 + REG_FROM_ARM_PARAM1);
-    *param2  = readl(d->bar1 + REG_FROM_ARM_PARAM2);
-    *param3  = readl(d->bar1 + REG_FROM_ARM_PARAM3);
-    *param4  = readl(d->bar1 + REG_FROM_ARM_PARAM4);
+    *message = readl(c985_bar1(d) + REG_FROM_ARM_MESSAGE);
+    *status  = readl(c985_bar1(d) + REG_FROM_ARM_MSG_STATUS);
+    *param0  = readl(c985_bar1(d) + REG_FROM_ARM_PARAM0);
+    *param1  = readl(c985_bar1(d) + REG_FROM_ARM_PARAM1);
+    *param2  = readl(c985_bar1(d) + REG_FROM_ARM_PARAM2);
+    *param3  = readl(c985_bar1(d) + REG_FROM_ARM_PARAM3);
+    *param4  = readl(c985_bar1(d) + REG_FROM_ARM_PARAM4);
 
     return 0;
 }
@@ -143,14 +144,14 @@ int QPFWAPI_Init(struct c985_poc *d)
     dev_dbg(&d->pdev->dev, "QPFWAPI_Init: Initializing firmware interface\n");
 
     /* Clear any stale mailbox state */
-    writel(0x00000000, d->bar1 + REG_TO_ARM_MSG_STATUS);
+    writel(0x00000000, c985_bar1(d) + REG_TO_ARM_MSG_STATUS);
     wmb();
 
     /* Wait a bit for firmware to settle */
     msleep(100);
 
     /* Verify mailbox is ready */
-    status = readl(d->bar1 + REG_TO_ARM_MSG_STATUS);
+    status = readl(c985_bar1(d) + REG_TO_ARM_MSG_STATUS);
     if (status & 1) {
         dev_warn(&d->pdev->dev,
                  "QPFWAPI_Init: Mailbox busy at init (0x%08x)\n", status);
@@ -172,10 +173,10 @@ void arm_ring_doorbell(struct c985_poc *d)
 {
     dev_dbg(&d->pdev->dev, "Ringing ARM doorbell\n");
 
-    iowrite32(0x00, d->bar0 + 0x04);
+    iowrite32(0x00, c985_bar0(d) + 0x04);
     wmb();
     udelay(100);
 
-    iowrite32(0x01, d->bar0 + 0x04);
+    iowrite32(0x01, c985_bar0(d) + 0x04);
     wmb();
 }
