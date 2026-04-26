@@ -19,7 +19,8 @@ $(MODULE_NAME)-objs := \
 	dma.o \
 	fw_debug.o \
 	firmware.o \
-	cobject.o
+	cobject.o \
+	pciecntl.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PWD  := $(shell pwd)
