@@ -25,7 +25,17 @@ $(MODULE_NAME)-objs := \
 	fw_debug.o \
 	firmware.o \
 	cobject.o \
-	pciecntl.o
+	pciecntl.o \
+	ctask/ctask_core.o \
+	ctask/ctask_alloc.o \
+	ctask/ctask_lifecycle.o \
+	ctask/ctask_io.o \
+	ctask/ctask_arm.o \
+	ctask/ctask_process.o \
+	ctask/ctask_thread.o \
+	ctask/ctask_settings.o \
+	ctask/ctask_fifo.o
+
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PWD  := $(shell pwd)
