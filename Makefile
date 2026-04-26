@@ -5,6 +5,7 @@ MODULE_NAME := avermedia_c985_poc
 obj-m := $(MODULE_NAME).o
 
 $(MODULE_NAME)-objs := \
+	qpmm.o \
 	avermedia_c985.o \
 	cqlcodec.o \
 	cqlcodec_done.o \
