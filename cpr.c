@@ -9,7 +9,7 @@
 #include "avermedia_c985.h"
 #include "cpr.h"
 
-int cpr_write(struct c985_poc *d, u32 card_addr, u32 val)
+int CPR_MemoryWrite(struct c985_poc *d, u32 card_addr, u32 val)
 {
     u32 addr_field, ctl, tmp, status, done_code;
     unsigned long timeout;
@@ -18,13 +18,13 @@ int cpr_write(struct c985_poc *d, u32 card_addr, u32 val)
     done_code = (d->codec.m_ChipVersion == CPR_CHIPVER_SPECIAL) ? 0x00 : 0x42;
     addr_field = ((card_addr >> 2) & 0x7ffffff) << 2;
 
-    dev_dbg(&d->pdev->dev, "CPR_WR: addr=0x%08x val=0x%08x done_code=0x%02x\n",
-            card_addr, val, done_code);
+ /*   dev_dbg(&d->pdev->dev, "CPR_WR: addr=0x%08x val=0x%08x done_code=0x%02x\n",
+            card_addr, val, done_code); */
 
     writel(addr_field, c985_bar1(d) + REG_CPR_WR_ADDR);
     ctl = readl(c985_bar1(d) + REG_CPR_WR_CTL);
 
-    dev_dbg(&d->pdev->dev, "CPR_WR: initial ctl=0x%08x\n", ctl);
+ //   dev_dbg(&d->pdev->dev, "CPR_WR: initial ctl=0x%08x\n", ctl);
 
     ctl &= 0xffff0003;
     ctl |= 0x4;
@@ -37,11 +37,12 @@ int cpr_write(struct c985_poc *d, u32 card_addr, u32 val)
         status = (tmp >> 18) & 0xff;
 
         loop_count++;
+        /*
         if (loop_count <= 5 || status == done_code) {
             dev_dbg(&d->pdev->dev, "CPR_WR: loop %d status=0x%02x (want 0x%02x)\n",
                     loop_count, status, done_code);
         }
-
+*/
         if (status == done_code)
             break;
         if (time_after(jiffies, timeout)) {
@@ -52,11 +53,11 @@ int cpr_write(struct c985_poc *d, u32 card_addr, u32 val)
         udelay(10);
     }
 
-    dev_dbg(&d->pdev->dev, "CPR_WR: complete after %d loops\n", loop_count);
+/*    dev_dbg(&d->pdev->dev, "CPR_WR: complete after %d loops\n", loop_count); */
     return 0;
 }
 
-int cpr_read(struct c985_poc *d, u32 card_addr, u32 *out)
+int CPR_MemoryRead(struct c985_poc *d, u32 card_addr, u32 *out)
 {
     u32 addr_field, ctl, tmp, status, busy_sentinel;
     unsigned long timeout;
@@ -65,13 +66,13 @@ int cpr_read(struct c985_poc *d, u32 card_addr, u32 *out)
     busy_sentinel = (d->codec.m_ChipVersion == CPR_CHIPVER_SPECIAL) ? 0x3f : 0xff;
     addr_field = ((card_addr >> 2) & 0x7ffffff) << 2;
 
-    dev_dbg(&d->pdev->dev, "CPR_RD: addr=0x%08x busy_sentinel=0x%02x\n",
-            card_addr, busy_sentinel);
+    /* dev_dbg(&d->pdev->dev, "CPR_RD: addr=0x%08x busy_sentinel=0x%02x\n",
+            card_addr, busy_sentinel); */
 
     writel(addr_field, c985_bar1(d) + REG_CPR_RD_ADDR);
     ctl = readl(c985_bar1(d) + REG_CPR_RD_CTL);
 
-    dev_dbg(&d->pdev->dev, "CPR_RD: initial ctl=0x%08x\n", ctl);
+    /* dev_dbg(&d->pdev->dev, "CPR_RD: initial ctl=0x%08x\n", ctl); */
 
     ctl &= 0xffff0003;
     ctl |= 0x10;
@@ -82,12 +83,13 @@ int cpr_read(struct c985_poc *d, u32 card_addr, u32 *out)
         tmp = readl(c985_bar1(d) + REG_CPR_RD_CTL);
         status = (tmp >> 18) & 0x3f;
 
+        /*
         loop_count++;
         if (loop_count <= 5 || (status != busy_sentinel && status != 0x00)) {
             dev_dbg(&d->pdev->dev, "CPR_RD: loop %d status=0x%02x\n",
                     loop_count, status);
         }
-
+*/
         if (status != busy_sentinel && status != 0x00)
             break;
         if (time_after(jiffies, timeout)) {
@@ -103,7 +105,8 @@ int cpr_read(struct c985_poc *d, u32 card_addr, u32 *out)
     readl(c985_bar1(d) + REG_CPR_RD_DATA);
     readl(c985_bar1(d) + REG_CPR_RD_DATA);
 
-    dev_dbg(&d->pdev->dev, "CPR_RD: complete after %d loops, val=0x%08x\n",
+/*    dev_dbg(&d->pdev->dev, "CPR_RD: complete after %d loops, val=0x%08x\n",
             loop_count, *out);
+            */
     return 0;
 }

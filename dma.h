@@ -81,13 +81,13 @@ struct dma_engine_info {
 /* ========== Public API ========== */
 
 /* Initialize and scan DMA engines */
-int c985_dma_init(struct c985_poc *d);
+int PedDmaInit(struct c985_poc *d);
 void c985_dma_cleanup(struct c985_poc *d);
 
 /* Synchronous DMA transfers */
-int c985_dma_write_sync(struct c985_poc *d, const void *src,
+int CQLCodec_StartDMAWrite(struct c985_poc *d, const void *src,
                         u32 card_addr, size_t size);
-int c985_dma_read_sync(struct c985_poc *d, void *dst,
+int CQLCodec_StartDMARead(struct c985_poc *d, void *dst,
                        u32 card_addr, size_t size);
 
 /* Test functions */

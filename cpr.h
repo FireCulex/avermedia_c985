@@ -6,7 +6,7 @@
 
 struct c985_poc;
 
-int cpr_write(struct c985_poc *d, u32 card_addr, u32 val);
-int cpr_read(struct c985_poc *d, u32 card_addr, u32 *out);
+int CPR_MemoryWrite(struct c985_poc *d, u32 card_addr, u32 val);
+int CPR_MemoryRead(struct c985_poc *d, u32 card_addr, u32 *out);
 
 #endif
