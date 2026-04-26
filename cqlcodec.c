@@ -1328,3 +1328,28 @@ int CQLCodecLib_CreatePCIe(struct cql_codec_lib *param_1)
     return 1;
 }
 
+int CQLCodec_IsCodecError(struct cql_codec *codec)
+{
+    int i;
+
+    pr_debug("CQLCodec_IsCodecError()\n");
+
+    for (i = 0; i < 8; i++) {
+        if (codec->m_pTask->m_TaskData[i].valid != 0 &&
+            codec->m_pTask->m_TaskData[i].m_Error != 0) {
+            return 1;
+            }
+    }
+
+    return 0;
+}
+
+void CQLCodec_ClrCodecError(struct cql_codec *param_1)
+{
+    if (!param_1)
+        return;
+
+    pr_debug("CQLCodec_ClrCodecError() - NEEDS IMPLEMENTING\n");
+
+    /* TODO: implement */
+}

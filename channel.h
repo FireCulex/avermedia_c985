@@ -50,6 +50,7 @@ int CMPEGOutChannel_Pause(struct c_channel *channel);
 int CMPEGOutChannel_GetBuffer(struct c_channel *channel, struct qp_buffer_descriptor **buf_desc,
                               u8 **buffer, u32 *size);
 int CMPEGOutChannel_CompleteBuffer(struct c_channel *channel, u32 bytes_used);
+int CChannel_needByteSwapping(struct c_channel *ch);
 /* int CVBIOutChannel_GetVBIFormat(struct c_vbi_out_channel *chan, struct qp_vbi_dataformat *fmt); */
 
 #endif /* _C985_CHANNEL_H */

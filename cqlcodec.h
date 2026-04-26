@@ -203,7 +203,7 @@ struct c_i2c *CI2C_Constructor(struct c_i2c *param_1, struct c_object *param_2, 
 int CQLCodec_ReleaseTask(struct c985_poc *param_1, u32 param_2);
 int CQLCodec_IsCodecIdle(struct c985_poc *param_1);
 int CQLCodec_IsCodecError(struct cql_codec *codec);
-void CQLCodec_ClrCodecError(struct c985_poc *param_1);
+void CQLCodec_ClrCodecError(struct cql_codec *param_1);
 int CQLCodecLibBusCallback(void *context, u32 event_type, void *param);
 int CQLCodec_RegisterISR(struct c985_poc *d);
 

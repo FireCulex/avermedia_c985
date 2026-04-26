@@ -240,7 +240,7 @@ int CTask_Close(struct c_task *task, u32 task_id, enum task_data_type data_type,
                 dev_err(&poc->pdev->dev,
                         "CTask_Close() FWDownload Failed status(%d)!!!\n", ret);
             } else {
-                CQLCodec_ClrCodecError(poc);
+                CQLCodec_ClrCodecError(codec);
             }
                 }
         }

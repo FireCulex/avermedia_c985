@@ -1104,6 +1104,14 @@ int CMPEGOutChannel_Pause(struct c_channel *channel)
     return 0;
 }
 
+int CChannel_needByteSwapping(struct c_channel *ch)
+{
+    if (!ch)
+        return 0;
+
+    return ch->m_bByteSwap;
+
+}
 /*
 int CVBIOutChannel_GetVBIFormat(struct c_vbi_out_channel *chan, struct qp_vbi_dataformat *fmt)
 {
