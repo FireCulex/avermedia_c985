@@ -8,6 +8,7 @@ $(MODULE_NAME)-objs := \
 	qpmm.o \
 	avermedia_c985.o \
 	channel.o \
+	queue.o \
 	cqlcodec.o \
 	cqlcodec_done.o \
 	cpr.o \
