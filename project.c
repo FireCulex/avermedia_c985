@@ -2,43 +2,50 @@
 /*
  * project.c - Main initialization sequence for AVerMedia C985
  *
- * Boot sequence discovered through reverse engineering:
+ * Boot sequence:
  * 1. Hardware init (NUC100, TI3101)
- * 2. Firmware upload (done in fwload.c)
- * 3. BAR0[0x04] doorbell → ARM boots, QPOS RTOS starts
- * 4. Wait for HCI thread to start
- * 5. Use BAR1 mailbox for encoder commands
+ * 2. Firmware upload (done in firmware.c via cqlcodec)
+ * 3. Ring doorbell → ARM boots
+ * 4. QPFWAPI_Init → verify mailbox ready
+ * 5. QPFWCODECAPI_SystemOpen → initialize encoder subsystem
+ * 6. QPFWCODECAPI_SystemLink → connect video/audio paths
+ * 7. Register V4L2 device
  */
 
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/io.h>
 
-#include "structs.h"
 #include "avermedia_c985.h"
 #include "nuc100.h"
 #include "ti3101.h"
 #include "cpr.h"
+#include "qpfwapi.h"
 #include "qpfwencapi.h"
 #include "i2c_bitbang.h"
-#include "qpfwapi.h"
+#include "v4l2.h"
+#include "cqlcodec.h"
 
-/* NUC100 GPIOs */
-#define NUC100_RST_GPIO 15
+/* GPIO registers */
+#define REG_GPIO_DIR    0x0610
+#define REG_GPIO_VAL    0x0614
 
 /*
- * Step 1: Hardware initialization
+ * init_hardware - Initialize NUC100 MCU and TI3101 HDMI receiver
  */
 static int init_hardware(struct c985_poc *d)
 {
     int ret;
 
-    d->m_McuAddr = NUC100_I2C_ADDR >> 1;
+    dev_info(&d->pdev->dev, "Initializing hardware...\n");
 
-    /* NUC100 reset (GPIO 15) */
-    gpio_drive_low(d, NUC100_RST_GPIO);
+    /* Use hw_config from project struct for MCU address */
+    d->m_McuAddr = d->project.m_averHwConfig.mcu_addr;
+
+    /* NUC100 reset via project GPIO config */
+    gpio_drive_low(d, d->project.m_gpio_mcu_reset);
     msleep(10);
-    gpio_release(d, NUC100_RST_GPIO);
+    gpio_release(d, d->project.m_gpio_mcu_reset);
     msleep(100);
 
     ret = nuc100_check_device(d);
@@ -61,202 +68,221 @@ static int init_hardware(struct c985_poc *d)
         return ret;
     }
 
+    dev_info(&d->pdev->dev, "Hardware init complete\n");
     return 0;
 }
 
 /*
- * Step 2: Check HDMI signal
+ * check_hdmi_signal - Check if HDMI input is present
+ *
+ * Populates project.m_hdmi_video_info with detected timing.
  */
 static int check_hdmi_signal(struct c985_poc *d)
 {
-    struct nuc100_hdmi_timing t;
+    struct hdmi_info *info = &d->project.m_hdmi_video_info;
     int valid = 0;
     int ret;
 
-    ret = nuc100_get_hdmi_timing(d, &t, &valid);
+    ret = nuc100_getHdmiVideo_6604(d, info, &valid);
     if (ret == 0 && valid) {
+        u32 fps = 0;
+
+        if (info->HTotal && info->VTotal)
+            fps = (info->PCLK * 1000) / (info->HTotal * info->VTotal);
+
         dev_info(&d->pdev->dev,
-                 "HDMI: %ux%u @ %u Hz (total %ux%u, pclk %u Hz)\n",
-                 t.hactive, t.vactive,
-                 (t.pixelclock * 1000) / (t.htotal * t.vtotal),
-                 t.htotal, t.vtotal,
-                 t.pixelclock);
+                 "HDMI: %ux%u @ %u Hz (pclk %d kHz)\n",
+                 info->HActive, info->VActive, fps, info->PCLK);
+
+        /* Store detected resolution for V4L2 */
+        d->width = info->HActive;
+        d->height = info->VActive;
+        d->hdmi_valid = 1;
+        d->project.m_hdmi_status = 1;
         return 0;
     }
 
-    dev_warn(&d->pdev->dev, "No valid HDMI signal detected\n");
+    dev_info(&d->pdev->dev, "No valid HDMI signal detected\n");
+    d->hdmi_valid = 0;
+    d->project.m_hdmi_status = 0;
+
+    /* Default resolution */
+    d->width = 1920;
+    d->height = 1080;
+
     return -ENOLINK;
 }
 
 /*
- * Step 3: Wait for firmware boot
- * After firmware upload, ring BAR0[0x04] doorbell to start ARM
+ * init_encoder - Initialize encoder subsystem via firmware API
  */
-static int wait_for_firmware_boot(struct c985_poc *d)
+static int init_encoder(struct c985_poc *d)
 {
-    u32 val;
-    int i;
+    int ret;
 
-    dev_info(&d->pdev->dev, "=== Waiting for firmware boot ===\n");
+    dev_info(&d->pdev->dev, "Initializing encoder...\n");
 
-    /* Ring doorbell */
-    dev_info(&d->pdev->dev, "Ringing doorbell...\n");
-    iowrite32(0x00, c985_bar0(d) + 0x04);
-    wmb();
-    udelay(100);
-    iowrite32(0x01, c985_bar0(d) + 0x04);
-    wmb();
+    /* Ring doorbell to wake ARM from WFI */
+    arm_ring_doorbell(d);
 
-    /* Wait for init messages to appear */
-    msleep(1000);
-
-    /* Check what addresses firmware gave us */
-    u32 cmd_addr = ioread32(c985_bar0(d) + 0x10);
-    u32 rsp_addr = ioread32(c985_bar0(d) + 0x14);
-    dev_vdbg(&d->pdev->dev, "cmd_addr = 0x%08x, rsp_addr = 0x%08x\n", cmd_addr, rsp_addr);
-
-    /* Dump debug log */
-    dev_info(&d->pdev->dev, "ARM debug log:\n");
-    for (i = 0; i < 40; i++) {
-        cpr_read(d, 0x563d8 + (i * 4), &val);
-        if (val == 0) continue;
-
-        char c[5] = {val & 0xff, (val >> 8) & 0xff,
-            (val >> 16) & 0xff, (val >> 24) & 0xff, 0};
-            dev_info(&d->pdev->dev, "  [%2d] '%c%c%c%c'\n", i,
-                     (c[0] >= 0x20 && c[0] < 0x7f) ? c[0] : '.',
-                     (c[1] >= 0x20 && c[1] < 0x7f) ? c[1] : '.',
-                     (c[2] >= 0x20 && c[2] < 0x7f) ? c[2] : '.',
-                     (c[3] >= 0x20 && c[3] < 0x7f) ? c[3] : '.');
-    }
-
-    /* Now send SystemOpen command via ARM memory */
-    dev_info(&d->pdev->dev, "Sending SystemOpen via cpr_write to 0x%08x\n", cmd_addr);
-
-    cpr_write(d, cmd_addr + 0x00, 0x000000F1);  /* command = SystemOpen */
-    cpr_write(d, cmd_addr + 0x04, 0x80000011);  /* function */
-    cpr_write(d, cmd_addr + 0x08, 0x00000000);
-    cpr_write(d, cmd_addr + 0x0c, 0x00000000);
-
-    /* Ring doorbell again */
-    iowrite32(0x00, c985_bar0(d) + 0x04);
-    wmb();
-    udelay(100);
-    iowrite32(0x01, c985_bar0(d) + 0x04);
-    wmb();
-
+    /* Wait for firmware to boot */
     msleep(500);
 
-    /* Check for new debug messages */
-    dev_info(&d->pdev->dev, "Debug log after command:\n");
-    for (i = 32; i < 64; i++) {
-        cpr_read(d, 0x563d8 + (i * 4), &val);
-        if (val == 0) continue;
-
-        char c[5] = {val & 0xff, (val >> 8) & 0xff,
-            (val >> 16) & 0xff, (val >> 24) & 0xff, 0};
-            dev_info(&d->pdev->dev, "  [%2d] '%c%c%c%c'\n", i,
-                     (c[0] >= 0x20 && c[0] < 0x7f) ? c[0] : '.',
-                     (c[1] >= 0x20 && c[1] < 0x7f) ? c[1] : '.',
-                     (c[2] >= 0x20 && c[2] < 0x7f) ? c[2] : '.',
-                     (c[3] >= 0x20 && c[3] < 0x7f) ? c[3] : '.');
+    /* Initialize firmware API */
+    ret = QPFWAPI_Init(d);
+    if (ret) {
+        dev_err(&d->pdev->dev, "QPFWAPI_Init failed: %d\n", ret);
+        return ret;
     }
 
-    /* Check response buffer */
-    dev_info(&d->pdev->dev, "Response buffer:\n");
-    for (i = 0; i < 8; i++) {
-        cpr_read(d, rsp_addr + (i * 4), &val);
-        dev_info(&d->pdev->dev, "  rsp[%d] = 0x%08x\n", i, val);
+    /* SystemOpen: use configured encoder function */
+ /*   dev_dbg(&d->pdev->dev, "Calling SystemOpen (function=0x%08x)\n",
+            d->m_EncFunction);
+    ret = QPFWCODECAPI_SystemOpen(&d->codec, 0, d->m_EncFunction);
+    if (ret) {
+        dev_err(&d->pdev->dev, "SystemOpen failed: %d\n", ret);
+        return ret;
     }
-
-    /* Check ready_queue */
-    cpr_read(d, 0x5eca0, &val);
-    dev_info(&d->pdev->dev, "ready_queue = 0x%08x\n", val);
-
-    return 0;  /* Don't fail - let's see what happens */
-}
-
-/*
- * Step 4: Send SystemOpen command via BAR1 mailbox
- */
-static int encoder_system_open(struct c985_poc *d)
-{
-    u32 val;
-
-    dev_info(&d->pdev->dev, "=== Encoder SystemOpen via ARM memory ===\n");
-
-    /* Try writing command directly to ARM memory instead of BAR1 */
-    /* Use the area we know the ARM can see */
-
-    /* First, find where the HCI thread expects commands */
-    /* From BAR0[0x10], we saw cmd buffer addresses like 0x19xxxx */
-    u32 cmd_addr = ioread32(c985_bar0(d) + 0x10);
-    dev_info(&d->pdev->dev, "BAR0[0x10] cmd_addr = 0x%08x\n", cmd_addr);
-
-    /* Write command directly to ARM memory */
-    cpr_write(d, cmd_addr + 0x00, 0x000000F1);  /* SystemOpen command */
-    cpr_write(d, cmd_addr + 0x04, 0x80000011);  /* function parameter */
-    cpr_write(d, cmd_addr + 0x08, 0x00000000);
-    cpr_write(d, cmd_addr + 0x0c, 0x00000000);
-
-    /* Ring doorbell again to signal new command? */
-    iowrite32(0x00, c985_bar0(d) + 0x04);
-    wmb();
-    udelay(100);
-    iowrite32(0x01, c985_bar0(d) + 0x04);
-    wmb();
-
-    msleep(200);
-
-    /* Check response */
-    u32 rsp_addr = ioread32(c985_bar0(d) + 0x14);
-    dev_info(&d->pdev->dev, "BAR0[0x14] rsp_addr = 0x%08x\n", rsp_addr);
-
-    for (int i = 0; i < 8; i++) {
-        cpr_read(d, rsp_addr + (i * 4), &val);
-        if (val != 0)
-            dev_info(&d->pdev->dev, "  rsp[%d] = 0x%08x\n", i, val);
+*/
+    /*
+     * SystemLink: Connect video/audio paths using configured link params
+     *
+     * Values come from project config (m_EncLink{Vin,Vout,Ain,Aout})
+     */
+  /*  dev_dbg(&d->pdev->dev, "Calling SystemLink (vin=%u vout=%u ain=%u aout=%u)\n",
+            d->m_EncLinkVin, d->m_EncLinkVout,
+            d->m_EncLinkAin, d->m_EncLinkAout);
+    ret = QPFWCODECAPI_SystemLink(&d->codec, 0,
+                                  d->m_EncLinkVin, d->m_VidInputChannel,
+                                  d->m_EncLinkVout, 0,
+                                  d->m_EncLinkAin, 0,
+                                  d->m_EncLinkAout, 0);
+    if (ret) {
+        dev_err(&d->pdev->dev, "SystemLink failed: %d\n", ret);
+        return ret;
     }
-
-    /* Check if ready_queue changed */
-    cpr_read(d, 0x5eca0, &val);
-    dev_info(&d->pdev->dev, "ready_queue after cmd = 0x%08x\n", val);
-
+*/
+    dev_info(&d->pdev->dev, "Encoder initialized\n");
     return 0;
 }
 
 /*
- * Main initialization entry point
+ * project_c985_init - Main initialization entry point
+ *
+ * Called after firmware has been loaded and interrupts registered.
  */
 int project_c985_init(struct c985_poc *d)
 {
     int ret;
 
-    /* Step 1: Hardware init */
+    dev_info(&d->pdev->dev, "=== C985 Project Init ===\n");
+    c985_debugfs_init(d);
+
+    /* Step 1: Hardware init (NUC100, TI3101) */
     ret = init_hardware(d);
     if (ret)
         return ret;
 
-    /* Step 2: Check HDMI (non-fatal) */
+    /* Step 2: Check HDMI signal (non-fatal) */
     check_hdmi_signal(d);
 
-    /* Step 3: Ring doorbell to wake ARM */
-
-    arm_ring_doorbell(d);
-
-    /* Wait for firmware boot */
-    msleep(1000);
-
-    /* Step 4: Initialize command interface */
-    ret = QPFWAPI_Init(d);
+    /* Step 3: Initialize encoder subsystem */
+    ret = init_encoder(d);
     if (ret)
         return ret;
 
-    /* Step 5: SystemOpen with task_id=8, function=0x80000011 */
-    ret = QPFWCODECAPI_SystemOpen(d, 8, 0x80000011);
-    if (ret)
+    /* Step 4: Register V4L2 device */
+    ret = c985_v4l2_register(d);
+    if (ret) {
+        dev_err(&d->pdev->dev, "V4L2 registration failed: %d\n", ret);
         return ret;
+    }
 
     dev_info(&d->pdev->dev, "C985 initialization complete\n");
     return 0;
 }
+
+/*
+ * project_c985_cleanup - Cleanup on module unload
+ */
+void project_c985_cleanup(struct c985_poc *d)
+{
+    dev_info(&d->pdev->dev, "=== C985 Project Cleanup ===\n");
+    c985_debugfs_cleanup(d);
+
+    /* Unregister V4L2 */
+    c985_v4l2_unregister(d);
+
+    /* Stop encoder if running */
+    if (d->encoder_running) {
+        QPFWENCAPI_StopEncoder(d, 8, 0, 0);
+        d->encoder_running = false;
+    }
+
+    dev_info(&d->pdev->dev, "Cleanup complete\n");
+}
+
+/*
+ * ProjectC985_selectInputSource - Switch audio input source via codec GPIOs
+ *
+ * This uses CQLCodec GPIO bit direction/value to route audio through
+ * the hardware mux on the C985 board.
+ *
+ * GPIO select_1 / select_2 control the analog mux:
+ *   External jack: select_1=HIGH, select_2=LOW  → TI3101 audio path
+ *   HDMI audio:    select_1=LOW,  select_2=HIGH → SiI6604 audio path
+ */
+void ProjectC985_selectInputSource(struct c985_poc *d,
+                                   enum project_input_control param_1)
+{
+    struct gpio_bit_direction dir;
+    struct gpio_bit_value val;
+
+    dev_dbg(&d->pdev->dev, "ProjectC985_selectInputSource() entry (%d)\n",
+            param_1);
+
+    if (param_1 == PROJECT_AUD_EXTERNAL_INPUT_JACK) {
+        /* Set GPIO direction for audio select pins (output) */
+        dir.bBitNumber = d->project.m_gpio_audio_select_1;
+        dir.Direction = GPIO_DIR_OUTPUT;
+        CQLCodec_SetGPIOBitDirection(d, &dir);
+
+        dir.bBitNumber = d->project.m_gpio_audio_select_2;
+        dir.Direction = GPIO_DIR_OUTPUT;
+        CQLCodec_SetGPIOBitDirection(d, &dir);
+
+        /* Set GPIO values: select_1=HIGH, select_2=LOW */
+        val.bBitNumber = d->project.m_gpio_audio_select_1;
+        val.bValue = 1;
+        CQLCodec_SetGPIOBitValue(d, &val);
+
+        val.bBitNumber = d->project.m_gpio_audio_select_2;
+        val.bValue = 0;
+        CQLCodec_SetGPIOBitValue(d, &val);
+
+        d->project.m_c985_audio_in = C985_AUDIO_INPUT_3101;
+
+    } else if (param_1 == PROJECT_AUD_HDMI_INPUT) {
+        /* Set GPIO direction for audio select pins (output) */
+        dir.bBitNumber = d->project.m_gpio_audio_select_1;
+        dir.Direction = GPIO_DIR_OUTPUT;
+        CQLCodec_SetGPIOBitDirection(d, &dir);
+
+        dir.bBitNumber = d->project.m_gpio_audio_select_2;
+        dir.Direction = GPIO_DIR_OUTPUT;
+        CQLCodec_SetGPIOBitDirection(d, &dir);
+
+        /* Set GPIO values: select_1=LOW, select_2=HIGH */
+        val.bBitNumber = d->project.m_gpio_audio_select_1;
+        val.bValue = 0;
+        CQLCodec_SetGPIOBitValue(d, &val);
+
+        val.bBitNumber = d->project.m_gpio_audio_select_2;
+        val.bValue = 1;
+        CQLCodec_SetGPIOBitValue(d, &val);
+
+        d->project.m_c985_audio_in = C985_AUDIO_INPUT_6604;
+    }
+}
+
+

@@ -2,6 +2,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef NUC100_H
 #define NUC100_H
+#include "types.h"
 
 #include <linux/types.h>
 
@@ -16,17 +17,6 @@
 #define AUD_SWITCH_GPIO2      0x07   /* C985AudSwitch2 */
 
 struct c985_poc;
-
-/* HDMI timing information structure */
-struct nuc100_hdmi_timing {
-    u16 hactive;
-    u16 vactive;
-    u16 htotal;
-    u16 vtotal;
-    u32 pixelclock;   /* in Hz */
-    u8 hpol;
-    u8 vpol;
-};
 
 /* Parameter structure for register access via NUC100 */
 struct nuc100_params {
@@ -45,6 +35,9 @@ int nuc100_get_hdmi_timing(struct c985_poc *d,
                            struct nuc100_hdmi_timing *t,
                            int *valid);
 int nuc100_access_regs(struct c985_poc *d, struct nuc100_params *p);
+int nuc100_getHdmiVideo_6604(struct c985_poc *d,
+                             struct hdmi_info *info,
+                             int *valid);
 
 #endif /* NUC100_H */
 

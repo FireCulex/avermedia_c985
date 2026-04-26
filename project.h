@@ -1,9 +1,12 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* project.h */
 #ifndef PROJECT_H
 #define PROJECT_H
 
-struct c985_poc;
+#include "structs.h"
 
 int project_c985_init(struct c985_poc *d);
+void project_c985_cleanup(struct c985_poc *d);
+void ProjectC985_selectInputSource(struct c985_poc *d,
+                                   enum project_input_control param_1);
 
-#endif
+#endif /* PROJECT_H */

@@ -1,5 +1,6 @@
 #ifndef INTERRUPTS_H
 #define INTERRUPTS_H
+#include "cqlcodec.h"
 
 struct c985_poc;
 
@@ -67,7 +68,16 @@ struct c985_poc;
  */
 int pci_interrupt_service_register(struct c985_poc *d);
 void pci_interrupt_service_unregister(struct c985_poc *d);
-void cpciectl_enable_interrupts(struct c985_poc *d);
-void cpciectl_disable_interrupts(struct c985_poc *d);
+void CPCIeCntl_EnableInterrupts(struct ihciapi *hci);
+void CPCIeCntl_DisableInterrupts(struct ihciapi *hci);
+irqreturn_t PciInterruptService(int irq, void *param_2);
+void PciDpcForIsrArmMsg(struct work_struct *work);
+void PedDmaComplete(struct c985_poc *d, u32 channel, u8 error);
+void PedDmaRequestFree(struct pci_dma_request *req);
+void PedDmaDpcHandler(struct c985_poc *d);
+void PciDpcForIsr(struct work_struct *work);
+int DM_ClearInterrupt(struct c985_poc *d, u32 int_type);
+int CDevice_DeviceCallback(void *context, u32 event_type, void *param_2);
+int DeviceCallbackFriend(void *context, u32 event_type, void *param_2);
 
 #endif /* INTERRUPTS_H */

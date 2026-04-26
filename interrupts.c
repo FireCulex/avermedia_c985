@@ -4,121 +4,193 @@
 #include "avermedia_c985.h"
 #include "interrupts.h"
 
-/*
- * pci_interrupt_service
- *
- * Direct port of PciInterruptService from decompile.
- *
- * Original checks:
- *   1. pRegistersEx + 0x30 for bit 30 (0x40000000)
- *   2. Loop through DMA channels, check ControlStatus at (channel * 0x100) + 0x04
- */
-static irqreturn_t pci_interrupt_service(int irq, void *dev_id)
+
+
+void CPCIeCntl_DisableInterrupts(struct ihciapi *hci)
 {
-    struct c985_poc *d = dev_id;
-    u32 reg_8030;
-    u32 channel_status;
-    int i;
-    irqreturn_t ret = IRQ_NONE;
-    static int call_count = 0;
-
-    call_count++;
-    if (call_count <= 10)
-        dev_dbg(&d->pdev->dev, "IRQ: handler #%d\n", call_count);
-
-    /* Check BAR0 + 0x8030, bit 30 (0x40000000) */
-    reg_8030 = readl(c985_bar0(d) + 0x8030);
-    if (call_count <= 10)
-        dev_dbg(&d->pdev->dev, "IRQ: reg_8030=0x%08x\n", reg_8030);
-
-    if (reg_8030 & 0x40000000) {
-        writel(0x40000000, c985_bar0(d) + 0x8030);
-        dev_dbg(&d->pdev->dev, "IRQ: BAR0[0x8030] bit30 CLEARED\n");
-        ret = IRQ_HANDLED;
-    }
-
-    /* Check per-DMA-channel status */
-    for (i = 0; i < d->pcie.m_NumDmaAvailable; i++) {
-        void __iomem *channel_base = c985_bar0(d) + (i * PED_DMA_ENGINE_SIZE);
-        channel_status = readl(channel_base + PED_DMA_ENGINE_CONTROL_STATUS);
-
-        if (call_count <= 10)
-            dev_dbg(&d->pdev->dev, "IRQ: ch%d status=0x%08x\n", i, channel_status);
-
-        if ((channel_status & 0x01) && (channel_status & 0x02)) {
-            writel(0x03, channel_base + PED_DMA_ENGINE_CONTROL_STATUS);
-            dev_dbg(&d->pdev->dev, "IRQ: DMA ch%d CLEARED\n", i);
-            ret = IRQ_HANDLED;
-        }
-    }
-
-    if (call_count <= 10)
-        dev_dbg(&d->pdev->dev, "IRQ: returning %s\n", ret == IRQ_HANDLED ? "HANDLED" : "NONE");
-
-    return ret;
-}
-
-/*
- * cpciectl_enable_interrupts
- *
- * Direct port of CPCIeCntl_EnableInterrupts from decompile.
- *
- * Original:
- *   *(pRegisters + 0x4000) |= 0x01;
- */
-void cpciectl_enable_interrupts(struct c985_poc *d)
-{
+    struct cql_codec *codec = hci->m_pMpegCodec;
+    struct c985_poc *d = container_of(codec, struct c985_poc, codec);
     u32 val;
 
-    val = readl(c985_bar0(d) + PED_DMA_COMMON_CONTROL_STATUS);
-    val |= PED_GLOBAL_INT_ENABLE;
-    writel(val, c985_bar0(d) + PED_DMA_COMMON_CONTROL_STATUS);
-}
-
-/*
- * cpciectl_disable_interrupts
- *
- * Direct port of CPCIeCntl_DisableInterrupt from decompile.
- *
- * Original:
- *   *(pRegisters + 0x4000) &= 0xFFFFFFFE;
- */
-void cpciectl_disable_interrupts(struct c985_poc *d)
-{
-    u32 val;
+    if (!d || !d->pcie.pRegisters)
+        return;
 
     val = readl(c985_bar0(d) + PED_DMA_COMMON_CONTROL_STATUS);
     val &= PED_GLOBAL_INT_DISABLE_MASK;
     writel(val, c985_bar0(d) + PED_DMA_COMMON_CONTROL_STATUS);
 }
 
-/*
- * pci_interrupt_service_register
- *
- * Port of CPCIeCntl_RegisterISR from decompile.
- */
-int pci_interrupt_service_register(struct c985_poc *d)
+void CPCIeCntl_EnableInterrupts(struct ihciapi *hci)
 {
-    int ret;
+    struct cql_codec *codec = hci->m_pMpegCodec;
+    struct c985_poc *d = container_of(codec, struct c985_poc, codec);
+    u32 val;
 
-    ret = request_irq(d->pdev->irq, pci_interrupt_service,
-                      IRQF_SHARED, DRV_NAME, d);
-    if (ret) {
-        d->irq_registered = 0;
-        return ret;
+    if (!d || !d->pcie.pRegisters)
+        return;
+
+    val = readl(c985_bar0(d) + PED_DMA_COMMON_CONTROL_STATUS);
+    val |= PED_GLOBAL_INT_ENABLE;
+    writel(val, c985_bar0(d) + PED_DMA_COMMON_CONTROL_STATUS);
+}
+// value 0x8030 comes from PciValidateConfig
+
+irqreturn_t PciInterruptService(int irq, void *dev_id)
+{
+    struct c985_poc *d = dev_id;
+    u32 status;
+    void __iomem *engine_regs;
+    irqreturn_t ret = IRQ_NONE;
+    bool dma_complete = false;
+    int i;
+
+    u32 bar1_0x30, bar1_0x800, bar1_0x804;
+    u32 dma0_status, dma1_status;
+    static int print_count = 0;
+
+    bar1_0x30 = readl(c985_bar1(d) + 0x30);
+    bar1_0x800 = readl(c985_bar1(d) + 0x800);
+    bar1_0x804 = readl(c985_bar1(d) + 0x804);
+    dma0_status = readl(c985_bar0(d) + 0x04);
+    dma1_status = readl(c985_bar0(d) + 0x2004);
+
+    if (print_count < 20) {
+        dev_info(&d->pdev->dev,
+                 "ISR: 0x30=0x%08x 0x800=0x%08x 0x804=0x%08x dma0=0x%08x dma1=0x%08x\n",
+                 bar1_0x30, bar1_0x800, bar1_0x804, dma0_status, dma1_status);
+        print_count++;
     }
 
-    d->irq_registered = 1;
+
+    dev_dbg(&d->pdev->dev,
+            "II$$$$$$ PciInterruptService Interrupt=%d DeviceExtension=%p\n",
+            irq, d);
+
+    /* Check BAR1 register 0x30 for bit 30 (ARM message interrupt) */
+    if (c985_bar0(d) != NULL) {
+        status = readl(c985_bar0(d) + 0x8030);
+        if (status & 0x40000000) {
+            writel(0x40000000, c985_bar0(d) + 0x8030);
+            ret = IRQ_HANDLED;
+            schedule_work(&d->irq_work);
+        }
+    }
+
+    /* Loop through available DMA channels */
+    for (i = 0; i < d->pcie.m_NumDmaAvailable; i++) {
+        /* Get engine registers using DmaIndex from DmaDevices array */
+        engine_regs = c985_bar0(d) + (d->pcie.DmaDevices[i].DmaIndex * 0x100);
+        status = readl(engine_regs + 4);
+
+        /* Check if both bit 0 and bit 1 are set (completion + enabled) */
+        if ((status & 0x02) && (status & 0x01)) {
+            /* Acknowledge by writing back bits 0 and 1 */
+            writel(0x03, engine_regs + 4);
+
+            /* Set interrupt status bit for this channel */
+            d->pcie.InterruptStatus |= (1 << (i & 0x1f));
+
+            ret = IRQ_HANDLED;
+            dma_complete = true;
+        }
+    }
+
+    if (dma_complete) {
+        schedule_work(&d->dma_work);
+    }
+
+    dev_info_ratelimited(&d->pdev->dev, "ISR returning %d\n", ret);
+    return ret;
+}
+
+void PciDpcForIsrArmMsg(struct work_struct *work)
+{
+    struct c985_poc *d = container_of(work, struct c985_poc, irq_work);
+
+    dev_dbg(&d->pdev->dev, "PciDpcForIsrArmMsg()\n");
+
+    if (d->pcie.pBusCallbackFunc) {
+        ((void (*)(void *, u32, void *))d->pcie.pBusCallbackFunc)(d->pcie.pBusCallbackContext, 1, NULL);
+    }
+}
+
+void PciDpcForIsr(struct work_struct *work)
+{
+    struct c985_poc *d = container_of(work, struct c985_poc, dma_work);
+
+    dev_dbg(&d->pdev->dev, "PciDpcForIsr(0x%p)\n", d);
+
+    PedDmaDpcHandler(d);
+}
+
+
+void PedDmaRequestFree(struct pci_dma_request *req)
+{
+    struct pci_dma_buffer *pPVar1;
+    unsigned long flags;
+
+    if (req == NULL)
+        return;
+
+    pPVar1 = req->pDmaBuffer;
+    if (pPVar1 != NULL) {
+        spin_lock_irqsave(&pPVar1->DmaRequestListLock, flags);
+        list_del(&req->ListEntry);
+        spin_unlock_irqrestore(&pPVar1->DmaRequestListLock, flags);
+    }
+
+    /* Call request callback if set */
+    if (req->pRequestCB != NULL) {
+        ((void (*)(struct pci_dma_request *))req->pRequestCB)(req);
+        req->pRequestCB = NULL;
+    }
+
+    kfree(req);
+}
+
+/**
+ * DM_ClearInterrupt - Clear specific interrupt types in BAR1 register 0x800
+ * @d: device structure
+ * @int_type: bitmask of interrupt types to clear
+ *            0x01 = ARM message  -> clears bit 16
+ *            0x02 = DMA write    -> clears bit 18
+ *            0x04 = DMA read     -> clears bit 17
+ *
+ * From decompile (DM_ClearInterrupt):
+ *   Reads 0x800, modifies bits 16-18, writes back
+ *
+ * Returns: 0 on success
+ */
+int DM_ClearInterrupt(struct c985_poc *d, u32 int_type)
+{
+    u32 reg_800;
+    u32 bit16, bit17, bit18;
+
+    reg_800 = readl(c985_bar1(d)  + 0x800);
+
+    /* Map status bits to hardware bits */
+    bit16 = (int_type & DM_INT_ARM_MSG)   ? 1 : 0;  /* 0x01 -> bit 16 */
+    bit17 = (int_type & DM_INT_DMA_READ)  ? 1 : 0;  /* 0x04 -> bit 17 */
+    bit18 = (int_type & DM_INT_DMA_WRITE) ? 1 : 0;  /* 0x02 -> bit 18 */
+
+    /* Clear bits 16-18, then set the ones we want to clear (write-1-to-clear?) */
+    reg_800 = (reg_800 & 0xFFF8FFFF) |
+    (bit16 << 16) |
+    (bit17 << 17) |
+    (bit18 << 18);
+
+    if (reg_800 != 0)
+        writel(reg_800, c985_bar1(d)  + 0x800);
+
+    return 0;
+}
+int CDevice_DeviceCallback(void *context, u32 event_type, void *param_2)
+{
+    /* Windows stub - does nothing */
     return 0;
 }
 
-/*
- * pci_interrupt_service_unregister
- */
-void pci_interrupt_service_unregister(struct c985_poc *d)
+int DeviceCallbackFriend(void *context, u32 event_type, void *param_2)
 {
-    if (d->irq_registered) {
-        free_irq(d->pdev->irq, d);
-        d->irq_registered = 0;
-    }
+    return CDevice_DeviceCallback(context, event_type, param_2);
 }
