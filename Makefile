@@ -7,6 +7,7 @@ obj-m := $(MODULE_NAME).o
 $(MODULE_NAME)-objs := \
 	avermedia_c985.o \
 	cqlcodec.o \
+	cqlcodec_done.o \
 	cpr.o \
 	i2c_bitbang.o \
 	ti3101.o \
