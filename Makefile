@@ -6,6 +6,7 @@ obj-m := $(MODULE_NAME).o
 
 $(MODULE_NAME)-objs := \
 	qpmm.o \
+	qposm.o \
 	avermedia_c985.o \
 	channel.o \
 	queue.o \
