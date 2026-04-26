@@ -37,5 +37,7 @@ int qphci_init(struct c985_poc *d);
 int qphci_reinit(struct c985_poc *d);
 int qphci_init_arm_loop(struct c985_poc *d);
 int dm_reset_arm(struct c985_poc *d, int run);
+int QPHCI_Done(struct c985_poc *d);
+u32 QPHCI_GetMaxDMASize(struct ihciapi *hci);
 
 #endif

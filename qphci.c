@@ -9,6 +9,8 @@
 #include "avermedia_c985.h"
 #include "qphci.h"
 #include "cpr.h"
+#include "pciecntl.h"
+#include "interrupts.h"
 
 /*
  * DM_ResetArm - halt or start the ARM processor
@@ -104,9 +106,15 @@ int qphci_init(struct c985_poc *d)
 
     dev_dbg(&d->pdev->dev, "QPHCI_Init()\n");
 
+    d->codec.m_hci.m_pMpegCodec = &d->codec;
+
     /* Read chip version */
     d->codec.m_ChipVersion = readl(c985_bar1(d) + REG_CHIP_VER);
     dev_dbg(&d->pdev->dev, "QPHCI_Init() chip_ver=0x%08x\n", d->codec.m_ChipVersion);
+
+    d->codec.m_hci.ResetArm = dm_reset_arm;
+    d->codec.m_hci.EnableInterrupts = CPCIeCntl_EnableInterrupts;
+    d->codec.m_hci.DisableInterrupts = CPCIeCntl_DisableInterrupts;
 
     /* Call QPHCI_PowerUp */
     ret = qphci_power_up(d);
@@ -204,4 +212,73 @@ int qphci_init_arm_loop(struct c985_poc *d)
 
     dev_dbg(&d->pdev->dev, "QPHCI: init ARM loop done\n");
     return 0;
+}
+
+int QPHCI_PowerDown(struct c985_poc *d)
+{
+    dev_dbg(&d->pdev->dev, "QPHCI_PowerDown()\n");
+
+    /* C985 (chip_type == 8) - nothing to do */
+    if (d->codec.m_ChipType == 8)
+        return 0;
+
+    /* For other chip types (not C985): */
+    if (d->codec.m_hci.m_access_mode == QPHCI_MODE_INDIRECT) {
+        writel(0, c985_bar1(d) + 0x80c);
+    }
+
+    writel(4, c985_bar1(d) + 0xf1c);
+
+    {
+        u32 val = readl(c985_bar1(d) + 0x50);
+        val |= 0x106;
+        writel(val, c985_bar1(d) + 0x50);
+        dev_dbg(&d->pdev->dev, "QPHCI_PowerDown() writing(0x%x) to pad control status\n", val);
+    }
+
+    writel(0, c985_bar1(d) + 0x00);
+    writel(0x1ffffff, c985_bar1(d) + 0x00);
+
+    return 0;
+}
+
+int QPHCI_Done(struct c985_poc *d)
+{
+    dev_dbg(&d->pdev->dev, "QPHCI_Done()\n");
+
+    /* Direct mode: write shutdown value to 0x840 */
+    if (d->codec.m_hci.m_access_mode == QPHCI_MODE_INDIRECT)
+        writel(0x10003124, c985_bar1(d) + 0x840);
+
+    /* PowerDown does nothing for chip_type == 8 */
+    QPHCI_PowerDown(d);
+
+    dev_dbg(&d->pdev->dev, "QPHCI_Done() complete\n");
+
+    return 0;
+}
+
+/*
+ * QPHCI_GetMaxDMASize - get maximum DMA transfer size for bus type
+ */
+u32 QPHCI_GetMaxDMASize(struct ihciapi *hci)
+{
+    if (!hci)
+        return 0x8000;  /* Default fallback */
+
+        switch (hci->m_bus_type) {
+            case QPHCI_BUS_USB:
+                return 0x20000;
+
+            case QPHCI_BUS_PCI:
+                if (hci->m_pPCIeCntl)
+                    return CPCIeCntl_GetMaxDMASize(hci->m_pPCIeCntl);
+            return 0x8000;
+
+            case QPHCI_BUS_201_EMULATION:
+                return 0x8000;
+
+            default:
+                return 0xFFFFFFF;
+        }
 }
