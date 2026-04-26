@@ -18,7 +18,8 @@ $(MODULE_NAME)-objs := \
 	interrupts.o \
 	dma.o \
 	fw_debug.o \
-	firmware.o
+	firmware.o \
+	cobject.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PWD  := $(shell pwd)
