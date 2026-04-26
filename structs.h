@@ -1,18 +1,3 @@
-/*
- * ============================================================================
- * WARNING: DO NOT MODIFY THIS FILE WITHOUT EXPLICIT PERMISSION
- * ============================================================================
- * This file contains the core device structures for the AVerMedia C985 driver.
- * All structures are based on Windows PDB decompilation and must match exactly.
- *
- * Before making ANY changes:
- * 1. Verify against Ghidra/IDA decompilation
- * 2. Confirm structure offsets match Windows driver
- * 3. Get explicit confirmation before modifying structure layouts
- *
- * Unauthorized modifications WILL cause driver crashes and data corruption.
- * ============================================================================
- */
 /* SPDX-License-Identifier: GPL-2.0 */
 
 #ifndef C985_STRUCTS_H
@@ -31,7 +16,7 @@
 #include <media/videobuf2-v4l2.h>
 
 #include "types.h"
-
+#include "pins.h"
 /* ============================================
  * ARM Buffer Variants (56 bytes each)
  * ============================================ */

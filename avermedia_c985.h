@@ -62,6 +62,9 @@ struct c985_poc;
      * Function Prototypes
      * ============================================ */
     void CDEVICE__getInitData(struct c985_poc *d);
+    void c985_debugfs_init(struct c985_poc *d);
+    void c985_debugfs_cleanup(struct c985_poc *d);
+
 
 
 #endif
