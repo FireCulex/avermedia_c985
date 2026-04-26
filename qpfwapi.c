@@ -27,7 +27,7 @@
  *
  * Returns: 0 if ready, -ETIMEDOUT if firmware didn't clear busy flag
  */
-int QPFWAPI_MailboxReady(struct c985_poc *d, int timeout_ms)
+int QPFWAPI_MailboxReady(struct c985_poc *d, u32 timeout_ms)
 {
     u32 val;
     unsigned long deadline = jiffies + msecs_to_jiffies(timeout_ms);
@@ -59,20 +59,20 @@ void QPFWAPI_MailboxDone(struct c985_poc *d)
  * QPFWAPI_SendMessageToARM - Send a message to the ARM processor
  * @d: device structure
  * @task_id: task ID (typically 8 for HCI thread)
- * @message: ARM_MESSAGE value (cmd in lower bits, task_id in upper bits for new chips)
+ * @msg: ARM message structure
  * @has_response: non-zero if expecting response status
+ * @status: receives response status (can be NULL if has_response is 0)
  * @timeout_ms: timeout for mailbox ready (0 = skip mailbox wait)
  *
  * Returns: 0 on success, negative error code on failure
  */
-int QPFWAPI_SendMessageToARM(struct c985_poc *d, u32 task_id, u32 message,
-                             int has_response, int timeout_ms)
+int QPFWAPI_SendMessageToARM(struct c985_poc *d, u32 task_id,
+                             struct arm_message *msg, int has_response,
+                             struct host_message_status *status, u32 timeout_ms)
 {
     u32 status_word;
+    u32 high_bits;
     int ret;
-
-    dev_dbg(&d->pdev->dev, "QPFWAPI_SendMessageToARM: task=%u msg=0x%08x\n",
-            task_id, message);
 
     /* Wait for mailbox ready if timeout specified */
     if (timeout_ms != 0) {
@@ -84,20 +84,36 @@ int QPFWAPI_SendMessageToARM(struct c985_poc *d, u32 task_id, u32 message,
         }
     }
 
+    /* Build status word high bits based on chip type */
+    if ((d->codec.m_ChipType & 0xe) == 0) {
+        /* Old chip: task_id in bits [31:16] */
+        high_bits = task_id << 16;
+    } else {
+        /* New chip (C985): use high bits from status or message */
+        if (status != NULL) {
+            high_bits = status->Read & 0xFFFF0000;
+        } else {
+            high_bits = msg->Read & 0xFFFF0000;
+        }
+    }
+
     /* Build status word:
-     * Bits [31:16] = high 16 bits of message (for new chips like C985)
+     * Bits [31:16] = high_bits (chip-dependent)
      * Bits [15:8]  = flags (bit 8 = has_response)
      * Bit  [0]     = trigger bit (always 1)
      */
-    status_word = (message & 0xFFFF0000) | ((has_response ? 1 : 0) << 8) | 1;
+    status_word = high_bits | ((has_response ? 1 : 0) << 8) | 1;
 
     /* Write status/trigger to 0x6CC */
     writel(status_word, c985_bar1(d) + REG_TO_ARM_MSG_STATUS);
     wmb();
 
     /* Write full message to 0x6FC */
-    writel(message, c985_bar1(d) + REG_TO_ARM_MESSAGE);
+    writel(msg->Read, c985_bar1(d) + REG_TO_ARM_MESSAGE);
     wmb();
+
+    dev_dbg(&d->pdev->dev, "QPFWAPI_SendMessageToARM: task=%u status_word=0x%08x msg=0x%08x\n",
+            task_id, status_word, msg->Read);
 
     /* Release mailbox if timeout was specified */
     if (timeout_ms != 0) {
@@ -110,23 +126,24 @@ int QPFWAPI_SendMessageToARM(struct c985_poc *d, u32 task_id, u32 message,
 /*
  * QPFWAPI_GetARMMessage - Read response from ARM processor
  * @d: device structure
- * @message: receives ARM response message (0x6B0)
+ * @msg: receives ARM response message (0x6B0)
  * @status: receives ARM response status (0x6C8)
  * @param0-4: receives response parameters (0x6B4-0x6C4)
  *
  * Returns: 0 on success, negative error code on failure
  */
-int QPFWAPI_GetARMMessage(struct c985_poc *d, u32 *message, u32 *status,
+int QPFWAPI_GetARMMessage(struct c985_poc *d, struct host_message *msg,
+                          struct host_message_status *status,
                           u32 *param0, u32 *param1, u32 *param2,
                           u32 *param3, u32 *param4)
 {
-    *message = readl(c985_bar1(d) + REG_FROM_ARM_MESSAGE);
-    *status  = readl(c985_bar1(d) + REG_FROM_ARM_MSG_STATUS);
-    *param0  = readl(c985_bar1(d) + REG_FROM_ARM_PARAM0);
-    *param1  = readl(c985_bar1(d) + REG_FROM_ARM_PARAM1);
-    *param2  = readl(c985_bar1(d) + REG_FROM_ARM_PARAM2);
-    *param3  = readl(c985_bar1(d) + REG_FROM_ARM_PARAM3);
-    *param4  = readl(c985_bar1(d) + REG_FROM_ARM_PARAM4);
+    msg->Read    = readl(c985_bar1(d) + REG_FROM_ARM_MESSAGE);
+    status->Read = readl(c985_bar1(d) + REG_FROM_ARM_MSG_STATUS);
+    *param0      = readl(c985_bar1(d) + REG_FROM_ARM_PARAM0);
+    *param1      = readl(c985_bar1(d) + REG_FROM_ARM_PARAM1);
+    *param2      = readl(c985_bar1(d) + REG_FROM_ARM_PARAM2);
+    *param3      = readl(c985_bar1(d) + REG_FROM_ARM_PARAM3);
+    *param4      = readl(c985_bar1(d) + REG_FROM_ARM_PARAM4);
 
     return 0;
 }
@@ -179,4 +196,56 @@ void arm_ring_doorbell(struct c985_poc *d)
 
     iowrite32(0x01, c985_bar0(d) + 0x04);
     wmb();
+}
+
+/*
+ * QPFWAPI_AckARMMessage - Acknowledge ARM message
+ * @d: device structure
+ * @msg: host message received from ARM
+ * @status: host message status
+ * @ack: non-zero to send acknowledgment with timeout
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+int QPFWAPI_AckARMMessage(struct c985_poc *d, struct host_message *msg,
+                          struct host_message_status *status, int ack)
+{
+    int ret;
+    struct arm_message arm_msg;
+    u32 task_id;
+    u32 cmd;
+    u32 timeout;
+
+    /* Check if response is needed (bit 8 of status) */
+    if (((status->Read >> 8) & 1) == 1) {
+        cmd = msg->Read & 0xffff;
+
+        if (d->codec.m_ChipType == 1) {
+            /* Old chip type */
+            arm_msg.Read = (cmd < 0x80) ? 0x31 : 0xa2;
+            task_id = status->Read >> 16;
+        } else {
+            /* New chip type (C985) */
+            arm_msg.Read = (cmd < 0x80) ? 0x31 : 0xa2;
+            arm_msg.Read |= (msg->Read & 0xffff0000);
+            task_id = msg->Read >> 16;
+        }
+
+        timeout = (ack == 0) ? 0 : 1000;
+
+        ret = QPFWAPI_SendMessageToARM(d, task_id, &arm_msg, 0, status, timeout);
+        if (ret < 0) {
+            dev_err(&d->pdev->dev,
+                    "QPFWAPI_AckARMMessage() failed %d\n", ret);
+            return ret;
+        }
+    }
+
+    /* Clear the pending bit */
+    status->Read &= 0xfffffffe;
+
+    /* Write back to register */
+    writel(status->Read, c985_bar1(d) + REG_FROM_ARM_MSG_STATUS);
+
+    return 0;
 }
