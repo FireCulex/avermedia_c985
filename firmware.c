@@ -3,23 +3,6 @@
  * firmware.c - ARM firmware loading for AVerMedia C985
  *
  * Based on CQLCodec_FWDownloadAll from Windows driver.
- *
- * Check idle state (if requested)
- * ResetArm(0) - Halt ARM
- * QPHCI_ReInit() - Reinitialize HCI
- * InitializeMemory() - Setup memory controller
- * AOSwitch / VOSwitch - Audio/Video output control
- * SetGPIODefaults() - GPIO configuration
- * Delay 50ms
- * Read reg 0x00, clear bit 13 - Audio DSP clock gate
- * Delay 1µs
- * FWDownload(audio, 0x100000) - Upload audio firmware
- * Delay 1ms
- * FWDownload(video, 0x000000) - Upload video firmware
- * Delay 500µs
- * ResetArm(1) - Start ARM
- * Dellay 150ms
- * Set volumes (AI=8, AO=8)
  */
 
 #include <linux/firmware.h>
@@ -34,10 +17,10 @@
 #include "cqlcodec.h"
 #include "interrupts.h"
 #include "dma.h"
-
 #include "qpfwencapi.h"
 #include "qpfwapi.h"
 #include "fw_debug.h"
+#include "cqlcodec.h"
 
 /* Card RAM addresses */
 #define CARD_RAM_AUDIO_END      0x00170624  /* Zero-fill target */
@@ -49,7 +32,6 @@
 
 #define DRIVER_VERSION "0.2.0-beta"
 
-
 /* Module parameter: upload method */
 static int use_dma = 1;
 module_param(use_dma, int, 0644);
@@ -59,6 +41,11 @@ MODULE_PARM_DESC(use_dma, "Use DMA for firmware upload (1=DMA, 0=CPR)");
 static int run_dma_tests = 0;
 module_param(run_dma_tests, int, 0644);
 MODULE_PARM_DESC(run_dma_tests, "Run DMA diagnostics before firmware upload");
+
+/* Module parameter for optional audio firmware loading */
+static bool load_audio_fw = true;
+module_param(load_audio_fw, bool, 0644);
+MODULE_PARM_DESC(load_audio_fw, "Load audio firmware (default: true)");
 
 /* ========== Upload Methods ========== */
 
@@ -81,7 +68,7 @@ static int upload_via_cpr(struct c985_poc *d, const u8 *data,
             memcpy(&word, data + i, min_t(size_t, 4, size - i));
         word = le32_to_cpu(word);
 
-        ret = cpr_write(d, card_addr + i, word);
+        ret = CPR_MemoryWrite(d, card_addr + i, word);
         if (ret) {
             dev_err(&d->pdev->dev, "CPR write failed at 0x%08x\n",
                     card_addr + (u32)i);
@@ -107,7 +94,7 @@ static int upload_via_dma(struct c985_poc *d, const u8 *data,
 
     dev_dbg(&d->pdev->dev, "DMA upload: %zu bytes to 0x%08x\n", size, card_addr);
 
-    ret = c985_dma_write_sync(d, data, card_addr, size);
+    ret = CQLCodec_StartDMAWrite(d, data, card_addr, size);
     if (ret) {
         dev_err(&d->pdev->dev, "DMA upload failed: %d\n", ret);
         return ret;
@@ -129,7 +116,9 @@ static int upload_firmware(struct c985_poc *d, const u8 *data,
         return upload_via_cpr(d, data, size, card_addr);
 }
 
-
+/**
+ * c985_write_qpsos_config - Write QPSOS configuration to card
+ */
 void c985_write_qpsos_config(struct c985_poc *d)
 {
     u32 config_base;
@@ -143,9 +132,9 @@ void c985_write_qpsos_config(struct c985_poc *d)
     d->config_base = config_base;
 
     /* Write firmware mode configuration */
-    cpr_write(d, 0x2F1094, d->codec.m_FwFixedMode);
-    cpr_write(d, 0x2F1090, d->codec.m_FwIntMode);
-    cpr_write(d, config_base + 4, 0);
+    CPR_MemoryWrite(d, 0x2F1094, d->codec.m_FwFixedMode);
+    CPR_MemoryWrite(d, 0x2F1090, d->codec.m_FwIntMode);
+    CPR_MemoryWrite(d, config_base + 4, 0);
 
     dev_dbg(&d->pdev->dev, "  0x2F1094 = %u (FwFixedMode)\n", d->codec.m_FwFixedMode);
     dev_dbg(&d->pdev->dev, "  0x2F1090 = %u (FwIntMode)\n", d->codec.m_FwIntMode);
@@ -182,34 +171,28 @@ void c985_write_qpsos_config(struct c985_poc *d)
     dev_dbg(&d->pdev->dev, "QPSOS configuration complete\n");
 }
 
-/* Module parameter for optional audio firmware loading */
-static bool load_audio_fw = true;
-module_param(load_audio_fw, bool, 0644);
-MODULE_PARM_DESC(load_audio_fw, "Load audio firmware (default: true)");
-
-int firmware_download_all(struct c985_poc *d)
+/**
+ * CQLCodec_FWDownloadAll - Main firmware download routine
+ */
+int CQLCodec_FWDownloadAll(struct c985_poc *d, int reset, int reload)
 {
     const struct firmware *fw_vid = NULL;
     const struct firmware *fw_aud = NULL;
     struct fw_metadata vid_meta = { .name = "Video" };
     struct fw_metadata aud_meta = { .name = "Audio" };
-
     u32 reg0, addr;
     int ret;
     int i;
 
-    dev_dbg(&d->pdev->dev,
-            "=== FIRMWARE DOWNLOAD START ===\n");
-    dev_info(&d->pdev->dev,
-             "Driver v%s, upload method: %s",
+    dev_dbg(&d->pdev->dev, "=== FIRMWARE DOWNLOAD START ===\n");
+    dev_info(&d->pdev->dev, "Driver v%s, upload method: %s\n",
              DRIVER_VERSION, use_dma ? "DMA" : "CPR");
-    dev_dbg(&d->pdev->dev,
-            "Audio Firmware: %s\n", load_audio_fw ? "Enabled" : "Disabled");
+    dev_dbg(&d->pdev->dev, "Audio Firmware: %s\n",
+            load_audio_fw ? "Enabled" : "Disabled");
 
     ret = request_firmware(&fw_vid, FW_VIDEO, &d->pdev->dev);
     if (ret) {
-        dev_err(&d->pdev->dev,
-                "Failed to load video firmware '%s': %d\n",
+        dev_err(&d->pdev->dev, "Failed to load video firmware '%s': %d\n",
                 FW_VIDEO, ret);
         goto out_cleanup;
     }
@@ -218,8 +201,7 @@ int firmware_download_all(struct c985_poc *d)
     if (load_audio_fw) {
         ret = request_firmware(&fw_aud, FW_AUDIO, &d->pdev->dev);
         if (ret) {
-            dev_err(&d->pdev->dev,
-                    "Failed to load audio firmware '%s': %d\n",
+            dev_err(&d->pdev->dev, "Failed to load audio firmware '%s': %d\n",
                     FW_AUDIO, ret);
             goto out_free_vid;
         }
@@ -268,24 +250,23 @@ int firmware_download_all(struct c985_poc *d)
                  "Skipping firmware compatibility check (audio disabled)\n");
     }
 
+
     /* ===== Initialize DMA if requested ===== */
-    if (use_dma) {
-        ret = c985_dma_init(d);
+    /* if (use_dma) {
+        ret = PedDmaInit(d);
         if (ret) {
             dev_warn(&d->pdev->dev,
                      "DMA init failed (%d), falling back to CPR\n", ret);
             use_dma = 0;
         }
     }
-
+/*
     /* ===== Run DMA diagnostics if enabled ===== */
+    /*
     if (use_dma && run_dma_tests) {
-        dev_info(&d->pdev->dev,
-                 "========================================\n");
-        dev_info(&d->pdev->dev,
-                 "=== DMA DIAGNOSTICS ===\n");
-        dev_info(&d->pdev->dev,
-                 "========================================\n");
+        dev_info(&d->pdev->dev, "========================================\n");
+        dev_info(&d->pdev->dev, "=== DMA DIAGNOSTICS ===\n");
+        dev_info(&d->pdev->dev, "========================================\n");
 
         ret = c985_dma_test_vs_cpr(d);
         if (ret)
@@ -298,10 +279,9 @@ int firmware_download_all(struct c985_poc *d)
             use_dma = 0;
         }
 
-        dev_info(&d->pdev->dev,
-                 "========================================\n");
+        dev_info(&d->pdev->dev, "========================================\n");
     }
-
+*/
     /* ===== STEP 1: Halt ARM ===== */
     dev_dbg(&d->pdev->dev, "Step 1: Halt ARM\n");
     ret = dm_reset_arm(d, 0);
@@ -316,7 +296,7 @@ int firmware_download_all(struct c985_poc *d)
 
     /* ===== STEP 3: Initialize memory controller ===== */
     dev_dbg(&d->pdev->dev, "Step 3: Init memory\n");
-    ret = codec_initialize_memory(d);
+    ret = CQLCodec_InitializeMemory(d);
     if (ret)
         goto out_free_all;
 
@@ -359,9 +339,10 @@ int firmware_download_all(struct c985_poc *d)
                 for (addr = zero_start; addr < CARD_RAM_AUDIO_END; ) {
                     size_t this_chunk = min_t(size_t, chunk_size,
                                               CARD_RAM_AUDIO_END - addr);
-                    ret = c985_dma_write_sync(d, zero_buf, addr, this_chunk);
+                    ret = CQLCodec_StartDMAWrite(d, zero_buf, addr, this_chunk);
                     if (ret) {
-                        dev_err(&d->pdev->dev, "Zero-fill DMA failed at 0x%x\n", addr);
+                        dev_err(&d->pdev->dev,
+                                "Zero-fill DMA failed at 0x%x\n", addr);
                         kfree(zero_buf);
                         goto out_free_all;
                     }
@@ -369,13 +350,14 @@ int firmware_download_all(struct c985_poc *d)
                 }
                 kfree(zero_buf);
             } else {
-                dev_warn(&d->pdev->dev, "Cannot alloc zero buffer, using CPR\n");
+                dev_warn(&d->pdev->dev,
+                         "Cannot alloc zero buffer, using CPR\n");
                 goto zerofill_cpr;
             }
         } else {
             zerofill_cpr:
             for (addr = zero_start; addr < CARD_RAM_AUDIO_END; addr += 4) {
-                cpr_write(d, addr, 0);
+                CPR_MemoryWrite(d, addr, 0);
 
                 if (((addr - zero_start) & 0xFFFF) == 0 && addr > zero_start) {
                     dev_info(&d->pdev->dev,
@@ -434,7 +416,6 @@ int firmware_download_all(struct c985_poc *d)
     dev_dbg(&d->pdev->dev, "Step 10: 250ms delay before ARM start\n");
     msleep(250);
 
-
     /* ===== STEP 11: Start ARM ===== */
     dev_dbg(&d->pdev->dev, "Step 11: Starting ARM core\n");
     ret = dm_reset_arm(d, 1);
@@ -442,52 +423,55 @@ int firmware_download_all(struct c985_poc *d)
         goto out_free_all;
 
     wmb();
-    udelay(10);  // Wait just 10 microseconds
-    dev_vdbg(&d->pdev->dev, "Immediate: 0x04=0x%08x\n", readl(c985_bar1(d) + 0x04));
+    udelay(10);
+    dev_vdbg(&d->pdev->dev, "Immediate: 0x04=0x%08x\n",
+             readl(c985_bar1(d) + 0x04));
     udelay(100);
-    dev_vdbg(&d->pdev->dev, "100us: 0x04=0x%08x\n", readl(c985_bar1(d) + 0x04));
+    dev_vdbg(&d->pdev->dev, "100us: 0x04=0x%08x\n",
+             readl(c985_bar1(d) + 0x04));
     msleep(1);
-    dev_vdbg(&d->pdev->dev, "1ms: 0x04=0x%08x\n", readl(c985_bar1(d) + 0x04));
+    dev_vdbg(&d->pdev->dev, "1ms: 0x04=0x%08x\n",
+             readl(c985_bar1(d) + 0x04));
 
+    /* Debug reads */
     {
         u32 val;
-        cpr_read(d, 0x692E8, &val);
+        CPR_MemoryRead(d, 0x692E8, &val);
         dev_vdbg(&d->pdev->dev, "Timer magic @ 0x692E8 = 0x%08x\n", val);
-        cpr_read(d, 0x692EC, &val);
+        CPR_MemoryRead(d, 0x692EC, &val);
         dev_vdbg(&d->pdev->dev, "Timer state @ 0x692EC = 0x%08x\n", val);
-        cpr_read(d, 0x4C998, &val);
+        CPR_MemoryRead(d, 0x4C998, &val);
         dev_vdbg(&d->pdev->dev, "Timer ticks @ 0x4C998 = 0x%08x\n", val);
     }
 
     writel(0x01000000, c985_bar1(d) + 0x0C);
-    dev_vdbg(&d->pdev->dev, "Reg 0x04=0x%08x - 0x00036c7d, 0x08=0x%08x - 0x00000000, 0x0C=0x%08x - 0x00000000 \n",
+    dev_vdbg(&d->pdev->dev,
+             "Reg 0x04=0x%08x, 0x08=0x%08x, 0x0C=0x%08x\n",
              readl(c985_bar1(d) + 0x04),
              readl(c985_bar1(d) + 0x08),
              readl(c985_bar1(d) + 0x0C));
 
     {
         u32 intc_base;
-        cpr_read(d, 0x4C6C8, &intc_base);
-        dev_dbg(&d->pdev->dev, "Interrupt controller base @ 0x4C6C8 = 0x%08x\n", intc_base);
+        CPR_MemoryRead(d, 0x4C6C8, &intc_base);
+        dev_dbg(&d->pdev->dev,
+                "Interrupt controller base @ 0x4C6C8 = 0x%08x\n", intc_base);
     }
 
     {
-        // Read the handler table at 0x5ECA0 + slot*8
         u32 slot2_handler, slot2_param;
-
-        cpr_read(d, 0x5ECA0 + 2*8 + 0, &slot2_handler);  // Slot 2 handler
-        cpr_read(d, 0x5ECA0 + 2*8 + 4, &slot2_param);    // Slot 2 param
-
-        dev_dbg(&d->pdev->dev, "Slot 2 (IRQ 5): handler=0x%08x param=0x%08x\n",
+        CPR_MemoryRead(d, 0x5ECA0 + 2*8 + 0, &slot2_handler);
+        CPR_MemoryRead(d, 0x5ECA0 + 2*8 + 4, &slot2_param);
+        dev_dbg(&d->pdev->dev,
+                "Slot 2 (IRQ 5): handler=0x%08x param=0x%08x\n",
                 slot2_handler, slot2_param);
     }
 
     {
-        // Also check 0x55468 mode config
         u32 mode_config;
-        cpr_read(d, 0x55468, &mode_config);
-        dev_dbg(&d->pdev->dev, "Mode config @ 0x55468 = 0x%08x (expect 0x02)\n",
-                mode_config);
+        CPR_MemoryRead(d, 0x55468, &mode_config);
+        dev_dbg(&d->pdev->dev,
+                "Mode config @ 0x55468 = 0x%08x (expect 0x02)\n", mode_config);
     }
 
     msleep(500);
@@ -498,61 +482,63 @@ int firmware_download_all(struct c985_poc *d)
     }
 
     {
-        // The config byte
         u32 config_byte;
-        cpr_read(d, 0x4C7E0, &config_byte);
+        CPR_MemoryRead(d, 0x4C7E0, &config_byte);
         dev_dbg(&d->pdev->dev, "Config byte @ 0x4C7E0 = 0x%08x\n", config_byte);
 
-        // The translation table
         {
-            u32 stride = 0x23; // 35
+            u32 stride = 0x23; /* 35 */
             u32 base_offset = (config_byte & 0xFF) * stride;
 
             for (i = 0; i < 35; i++) {
                 u32 hw_irq;
-                cpr_read(d, 0x49CB4 + (base_offset + i) * 4, &hw_irq);
+                CPR_MemoryRead(d, 0x49CB4 + (base_offset + i) * 4, &hw_irq);
                 if ((s32)hw_irq >= 0) {
-                    dev_dbg(&d->pdev->dev, "  LogIRQ[%2d] -> HwIRQ %d\n", i, hw_irq);
+                    dev_dbg(&d->pdev->dev,
+                            "  LogIRQ[%2d] -> HwIRQ %d\n", i, hw_irq);
                 }
             }
         }
     }
-
 
     /* ===== STEP 12: Initialize firmware communication ===== */
     dev_vdbg(&d->pdev->dev, "Step 12: Initializing firmware communication\n");
 
     {
         u32 int_enable;
-        cpr_read(d, 0x04, &int_enable);  /* Interrupt controller enable */
+        CPR_MemoryRead(d, 0x04, &int_enable);
         dev_vdbg(&d->pdev->dev, "ARM interrupt enable: 0x%08x\n", int_enable);
     }
 
     /* Enable PCIe interrupts */
-    cpciectl_enable_interrupts(d);
+    CPCIeCntl_EnableInterrupts(&d->codec.m_hci);
 
     /* Set default volumes */
     d->codec.m_AIVolume = 8;
     d->codec.m_AOVolume = 8;
 
-    if (load_audio_fw)
-        dev_vdbg(&d->pdev->dev,
-                 "Firmware complete: QPSOS v%u, Video CRC 0x%08x, Audio CRC 0x%08x",
+    if (load_audio_fw) {
+        dev_info(&d->pdev->dev,
+                 "Firmware complete: QPSOS v%u, Video CRC 0x%08x, Audio CRC 0x%08x\n",
                  d->qpsos_version, vid_meta.crc32, aud_meta.crc32);
-        else
-            dev_info(&d->pdev->dev,
-                     "Firmware complete: QPSOS v%u, Video CRC 0x%08x (audio disabled)",
-                     d->qpsos_version, vid_meta.crc32);
+    } else {
+        dev_info(&d->pdev->dev,
+                 "Firmware complete: QPSOS v%u, Video CRC 0x%08x (audio disabled)\n",
+                 d->qpsos_version, vid_meta.crc32);
+    }
 
-            ret = 0;
+    ret = 0;
 
-        out_free_all:
-        if (load_audio_fw)
-            release_firmware(fw_aud);
+    out_free_all:
+    if (load_audio_fw && fw_aud)
+        release_firmware(fw_aud);
     out_free_vid:
     release_firmware(fw_vid);
+
     out_cleanup:
+    /*
     if (use_dma)
         c985_dma_cleanup(d);
+    */
     return ret;
 }

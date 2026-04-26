@@ -4,6 +4,6 @@
 
 struct c985_poc;
 
-int firmware_download_all(struct c985_poc *d);
+int CQLCodec_FWDownloadAll(struct c985_poc *poc, int reset, int reload);
 
 #endif /* FIRMWARE_H */

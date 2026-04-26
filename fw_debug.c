@@ -191,7 +191,7 @@ int verify_firmware_in_card_memory(struct c985_poc *d,
 
     /* Read back via CPR */
     for (i = 0; i < verify_size; i += 4) {
-        ret = cpr_read(d, card_addr + i, &card_val);
+        ret = CPR_MemoryRead(d, card_addr + i, &card_val);
         if (ret) {
             dev_err(&d->pdev->dev,
                     "CPR read failed at 0x%08x\n",
