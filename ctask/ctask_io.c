@@ -202,7 +202,7 @@ void CTask_BuildIoBlockYUVRAS(struct c_task *task, struct task_data *task_data,
     unsigned long flags;
     int io_ready;
     struct task_io_pending *io_pending;
-    struct qp_buffer_descriptor *buf_desc;
+    struct _QP_BUFFER_DESCRIPTOR *buf_desc;
 
     if (!task || !task_data)
         return;

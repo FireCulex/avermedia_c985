@@ -79,15 +79,6 @@ enum task_type {
     TASK_TYPE_END = 2,
 };
 
-/* ============================================
- * QP State
- * ============================================ */
-enum qp_state {
-    QPSTATE_STOP = 0,
-    QPSTATE_ACQUIRE = 1,
-    QPSTATE_PAUSE = 2,
-    QPSTATE_RUN = 3,
-};
 
 /* ============================================
  * Task/Channel Data Types
@@ -146,21 +137,6 @@ enum dma_dir {
     DMA_DIR_READ = 0,
     DMA_DIR_WRITE = 1,
 };
-
-/* ============================================
- * KSPIN Communication Types
- * ============================================ */
-#define KSPIN_COMMUNICATION_NONE        0
-#define KSPIN_COMMUNICATION_SINK        1
-#define KSPIN_COMMUNICATION_BOTH        2
-#define KSPIN_COMMUNICATION_BRIDGE      3
-#define KSPIN_COMMUNICATION_DATASINK    4
-
-/* ============================================
- * KSPIN Data Flow
- * ============================================ */
-#define KSPIN_DATAFLOW_IN               0
-#define KSPIN_DATAFLOW_OUT              1
 
 /* ============================================
  * Project Input Control

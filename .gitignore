@@ -8,3 +8,5 @@
 *.mod
 *.order
 *.kate-swp
+*.backup*
+*.bak

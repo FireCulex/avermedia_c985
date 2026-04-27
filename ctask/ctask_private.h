@@ -17,6 +17,7 @@
 #include "ctask.h"
 #include "../structs.h"
 #include "../types.h"
+#include "../include/abi/qp_buffer_descriptor.h"
 #include "../avermedia_c985.h"
 #include "../cobject.h"
 #include "../qpfwapi.h"
@@ -43,19 +44,19 @@ static inline struct c985_poc *codec_to_poc(struct cql_codec *codec)
 /* ============================================
  * CObject Critical Section Helpers
  * ============================================ */
-static inline void CObject_enterCritical(struct c_object *obj)
+static inline void CObject_enterCritical(struct CObject *obj)
 {
     if (obj && obj->m_semCriticalSection)
         mutex_lock((struct mutex *)obj->m_semCriticalSection);
 }
 
-static inline void CObject_leaveCritical(struct c_object *obj)
+static inline void CObject_leaveCritical(struct CObject *obj)
 {
     if (obj && obj->m_semCriticalSection)
         mutex_unlock((struct mutex *)obj->m_semCriticalSection);
 }
 
-static inline void CObject_lock(struct c_object *obj)
+static inline void CObject_lock(struct CObject *obj)
 {
     if (!obj)
         return;
@@ -71,7 +72,7 @@ static inline void CObject_lock(struct c_object *obj)
     }
 }
 
-static inline void CObject_unlock(struct c_object *obj)
+static inline void CObject_unlock(struct CObject *obj)
 {
     if (!obj)
         return;

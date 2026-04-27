@@ -186,7 +186,7 @@ void CTask_ProcessDataStreaming(struct c_task *task)
 
                 /* Get user buffer if none */
                 if (td->UserBuffer[TASK_DATA_TYPE_COMP_AUD].pBufDesc == NULL && channel->GetBuffer) {
-                    int ret = ((int (*)(struct c_channel *, struct qp_buffer_descriptor **,
+                    int ret = ((int (*)(struct c_channel *, struct _QP_BUFFER_DESCRIPTOR **,
                                         u8 **, u32 *))channel->GetBuffer)(
                                             channel,
                                             &td->UserBuffer[TASK_DATA_TYPE_COMP_AUD].pBufDesc,
@@ -251,7 +251,7 @@ void CTask_ProcessDataStreaming(struct c_task *task)
                     channel = td->pChannel[TASK_DATA_TYPE_PCM];
 
                 if (td->UserBuffer[TASK_DATA_TYPE_PCM].pBufDesc == NULL && channel->GetBuffer) {
-                    int ret = ((int (*)(struct c_channel *, struct qp_buffer_descriptor **,
+                    int ret = ((int (*)(struct c_channel *, struct _QP_BUFFER_DESCRIPTOR **,
                                         u8 **, u32 *))channel->GetBuffer)(
                                             channel,
                                             &td->UserBuffer[TASK_DATA_TYPE_PCM].pBufDesc,
@@ -381,7 +381,7 @@ void CTask_ProcessDataStreaming(struct c_task *task)
                     switch (td->ArmRequest[(int)data_type].ArmBuffer.type) {
                         case ARM_BUF_YUV:
                             if (channel->GetBufferYUV) {
-                                ret = ((int (*)(struct c_channel *, struct qp_buffer_descriptor **,
+                                ret = ((int (*)(struct c_channel *, struct _QP_BUFFER_DESCRIPTOR **,
                                                 u8 **, u32 *, u8 **, u32 *))channel->GetBufferYUV)(
                                                     channel,
                                                     &td->UserBuffer[(int)data_type].pBufDesc,
@@ -395,7 +395,7 @@ void CTask_ProcessDataStreaming(struct c_task *task)
                         case ARM_BUF_YUVMB2RAS:
                         case ARM_BUF_YUVRAS:
                             if (channel->GetBufferYUVRAS) {
-                                ret = ((int (*)(struct c_channel *, struct qp_buffer_descriptor **,
+                                ret = ((int (*)(struct c_channel *, struct _QP_BUFFER_DESCRIPTOR **,
                                                 u8 **, u32 *, u8 **, u32 *, u8 **, u32 *))channel->GetBufferYUVRAS)(
                                                     channel,
                                                     &td->UserBuffer[(int)data_type].pBufDesc,
@@ -410,7 +410,7 @@ void CTask_ProcessDataStreaming(struct c_task *task)
 
                         default:
                             if (channel->GetBuffer) {
-                                ret = ((int (*)(struct c_channel *, struct qp_buffer_descriptor **,
+                                ret = ((int (*)(struct c_channel *, struct _QP_BUFFER_DESCRIPTOR **,
                                                 u8 **, u32 *))channel->GetBuffer)(
                                                     channel,
                                                     &td->UserBuffer[(int)data_type].pBufDesc,
@@ -546,7 +546,7 @@ void CEncoderTask_ProcessIoComplete(struct c_task *task, struct task_data *task_
 {
     struct c985_poc *poc;
     u32 uVar1;
-    struct qp_buffer_descriptor *buf_desc;
+    struct _QP_BUFFER_DESCRIPTOR *buf_desc;
 
     if (!task || !task_data)
         return;

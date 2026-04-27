@@ -34,6 +34,12 @@ struct _QP_TASK_HANDLE;
 struct ProjectManager;
 struct ProjectFactory;
 
+struct IMpegCodec      *CDevice_getMpegCodec(struct c_device *this);
+struct project_manager *CDevice_getProjectManager(struct c_device *this);
+struct CTaskEncode     *CDevice_getEncodeHandle(struct c_device *this);
+struct CTaskRawVideo   *CDevice_getRawVidHandle(struct c_device *this);
+struct CTaskRawAudio   *CDevice_getRawAudHandle(struct c_device *this);
+
 /* ============================================
  * QP_PROCESS_TYPE Enum
  * ============================================ */
@@ -230,6 +236,7 @@ struct c_device {
     u8 _pad6[2];                        /* 0x31E */
     u32 m_dwDetectCount;                /* 0x320 */
     u32 m_dwDetectThreadHold;           /* 0x324 */
-};                                      /* Total: 0x328 bytes */
+
+};
 
 #endif /* CDEVICE_H */

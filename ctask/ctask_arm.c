@@ -4,7 +4,7 @@
  */
 
 #include "ctask_private.h"
-
+#include "../channel.h"
 /* ================================================================
  * CTask_CompleteArm
  * ================================================================ */
@@ -312,7 +312,7 @@ int CTask_CompleteUser(struct c_task *task, struct task_data *td,
                        enum task_data_type data_type)
 {
     struct c985_poc *poc = codec_to_poc(task->m_pMpegCodec);
-    struct qp_buffer_descriptor *buf_desc;
+    struct _QP_BUFFER_DESCRIPTOR *buf_desc;
     struct c_channel *channel;
     int idx = (int)data_type;
 
@@ -352,7 +352,7 @@ int CTask_CompleteUser(struct c_task *task, struct task_data *td,
 
         /* Complete buffer to channel - buf_desc is saved locally */
         if (channel && channel->CompleteBuffer)
-            ((void (*)(struct c_channel *, struct qp_buffer_descriptor *))
+            ((void (*)(struct c_channel *, struct _QP_BUFFER_DESCRIPTOR *))
             channel->CompleteBuffer)(channel, buf_desc);
 
         return 1;

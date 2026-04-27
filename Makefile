@@ -34,14 +34,18 @@ $(MODULE_NAME)-objs := \
 	ctask/ctask_process.o \
 	ctask/ctask_thread.o \
 	ctask/ctask_settings.o \
-	ctask/ctask_fifo.o
+	ctask/ctask_fifo.o \
+	cdevice.o \
+	sync.o \
+	pins.o \
+	v4l2.o
 
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PWD  := $(shell pwd)
 
 all:
-	$(MAKE) -C $(KDIR) M=$(PWD) LLVM=1 modules
+	$(MAKE) -C $(KDIR) M=$(PWD) LLVM=1 KCFLAGS="-w" modules
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) LLVM=1 clean

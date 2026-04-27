@@ -4,11 +4,17 @@
  */
 
 #include "ctask_private.h"
+#include "../cdevice.h"
+#include "../include/abi/ccapturefilter.h"
+#include "../include/abi/ctaskrawaudio.h"
+#include "../include/abi/cdecoderfilter.h"
+#include "../include/abi/cencoderfilter.h"
+#include "../include/abi/qp_process_type.h"
 
 /* ================================================================
  * CTask_Constructor
  * ================================================================ */
-struct c_task *CTask_Constructor(struct c_task *task, struct c_object *parent,
+struct c_task *CTask_Constructor(struct c_task *task, struct CObject *parent,
                                  u32 param_3, u32 param_4, struct cql_codec *codec,
                                  void *evt_wait, void *evt_reply)
 {
@@ -189,3 +195,94 @@ enum task_state CTask_GetTaskState(struct c_task *task, u32 task_id)
 
     return task->m_TaskData[task_id].m_State;
 }
+
+ulong CTaskRawAudio_getTaskHandle(struct CTaskRawAudio *this)
+{
+    return this->m_hRawAudioTask;
+}
+EXPORT_SYMBOL_GPL(CTaskRawAudio_getTaskHandle);
+
+ulong CDecoderFilter_GetTaskHandle(struct CDecoderFilter *this)
+{
+    return this->m_hTask;
+}
+EXPORT_SYMBOL_GPL(CDecoderFilter_GetTaskHandle);
+
+ulong CEncoderFilter_GetEncodeTaskHandle(struct CEncoderFilter *this)
+{
+    ulong ret;
+    struct CTaskEncode *task;
+
+    task = CDevice_getEncodeHandle(this->m_pDevice);
+    if (task == NULL) {
+        ret = 0xffffffff;
+    }
+    else {
+        task = CDevice_getEncodeHandle(this->m_pDevice);
+        ret = CObject_IsInitialized((struct CObject *)task);
+    }
+
+    return ret;
+}
+EXPORT_SYMBOL_GPL(CEncoderFilter_GetEncodeTaskHandle);
+
+ulong CCaptureFilter_GetRawVideoTaskHandle(struct CCaptureFilter *this)
+{
+    ulong ret;
+    struct CTaskRawVideo *task;
+    struct CTaskRawAudio *task_audio;
+
+    task = CDevice_getRawVidHandle(this->m_pDevice);
+    if (task == NULL) {
+        ret = 0xffffffff;
+    }
+    else {
+        task_audio = (struct CTaskRawAudio *)CDevice_getRawVidHandle(this->m_pDevice);
+        ret = CTaskRawAudio_getTaskHandle(task_audio);
+    }
+
+    return ret;
+}
+EXPORT_SYMBOL_GPL(CCaptureFilter_GetRawVideoTaskHandle);
+
+ulong CCaptureFilter_GetRawAudioTaskHandle(struct CCaptureFilter *this)
+{
+    ulong ret;
+    struct CTaskRawAudio *task;
+
+    task = CDevice_getRawAudHandle(this->m_pDevice);
+    if (task == NULL) {
+        ret = 0xffffffff;
+    }
+    else {
+        task = CDevice_getRawAudHandle(this->m_pDevice);
+        ret = CTaskRawAudio_getTaskHandle(task);
+    }
+
+    return ret;
+}
+
+/* If you know the struct */
+enum qp_process_type CEncoderFilter_getProcessName(struct CEncoderFilter *filter)
+{
+    if (!filter)
+        return PROCESS_TYPE_UNKNOWN;
+
+    return filter->m_process_name;
+}
+EXPORT_SYMBOL_GPL(CEncoderFilter_getProcessName);
+
+/* If you know the struct */
+int CCaptureFilter_ProcessName_Setting(struct CCaptureFilter *filter, enum qp_process_type process_type)
+{
+    if (!filter)
+        return -EINVAL;
+
+    filter->m_process_name = process_type;
+    return 0;
+}
+
+EXPORT_SYMBOL_GPL(CCaptureFilter_ProcessName_Setting);
+
+
+EXPORT_SYMBOL_GPL(CCaptureFilter_GetRawAudioTaskHandle);

@@ -8,7 +8,7 @@
 /* ================================================================
  * CFifo_Constructor
  * ================================================================ */
-struct c_fifo *CFifo_Constructor(struct c_fifo *fifo, struct c_object *parent,
+struct c_fifo *CFifo_Constructor(struct c_fifo *fifo, struct CObject *parent,
                                  u32 attr, u32 size, u32 entry_size)
 {
     if (!fifo)

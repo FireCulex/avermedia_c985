@@ -16,7 +16,10 @@
 #include <media/videobuf2-v4l2.h>
 
 #include "types.h"
-#include "pins.h"
+#include "include/abi/impegcodec.h"
+#include "include/abi/cyuvoutpin.h"
+#include "include/abi/cpcmoutpin.h"
+#include "include/abi/cqueue.h"
 /* ============================================
  * ARM Buffer Variants (56 bytes each)
  * ============================================ */
@@ -120,7 +123,7 @@ struct task_user_buffer {
     union user_buffer_union BUFFER;     /* 0x00 - 36 bytes */
     u8 status;                          /* 0x24 - 1 byte */
     u8 _pad1[3];                        /* 0x25 - 3 bytes padding */
-    struct qp_buffer_descriptor *pBufDesc;  /* 0x28 - 8 bytes */
+    struct _QP_BUFFER_DESCRIPTOR *pBufDesc;  /* 0x28 - 8 bytes */
 } __packed;                             /* ← Keep this (48 bytes total) */
 
 /* ============================================
@@ -134,50 +137,16 @@ struct task_arm_request {
 } __packed;
 
 /* ============================================
- * CObject (0x38 = 56 bytes)
+ * CObject Base Class (moved to include/abi/cobject.h)
  * ============================================ */
-struct c_object {
-    int (*Init)(struct c_object *self);   /* 0x00 */
-    int (*Done)(struct c_object *self);   /* 0x08 */
-    struct c_object *m_pParent;         /* 0x10 */
-    int m_fInitialized;                 /* 0x18 */
-    u32 m_dwObjectAttributes;           /* 0x1C */
-    void *m_semCriticalSection;         /* 0x20 */
-    spinlock_t m_spinlock;              /* 0x28 - Linux: 4 bytes */
-    u8 _pad_spin[4];                    /* 0x2C - PADDING: Windows m_spinlock is ulong64 (8 bytes) */
-    u8 m_irql;                          /* 0x30 */
-    u8 _pad[7];                         /* 0x31 - Pad to 0x38 */
-};
-
-struct c_object_entry {
-    void *pObject;                      /* Pointer to the managed object */
-    u32 hObject;                        /* Handle ID */
-    u32 _pad;                           /* Padding for 8-byte alignment */
-    struct c_object_entry *pNext;       /* Next entry in list */
-};
-
-struct c_object_mgr {
-    struct c_object m_Object;           /* 0x00 - Base class */
-    u32 m_hCurObject;                   /* 0x38 */
-    u32 _pad1;                          /* 0x3C - Padding for pointer alignment */
-    struct c_object_entry *m_pHead;     /* 0x40 */
-    u32 m_dwObjectNb;                   /* 0x48 */
-    u32 _pad2;                          /* 0x4C - Padding for pointer alignment */
-    void *m_pFuncCallback;              /* 0x50 - _EQPErrors (*)(void *) */
-};                                      /* Size: 0x58 (88 bytes) */
-
-
-/* Queue entry - 16 bytes */
-struct queue_entry {
-    void *Data;                     /* 0x00 */
-    struct queue_entry *pNext;      /* 0x08 */
-};
+#include "include/abi/cobject.h"
+#include "include/abi/cobjectmgr.h"
 
 /* ============================================
  * CFifo (0x54 = 84 bytes + spinlock)
  * ============================================ */
 struct c_fifo {
-    struct c_object m_Object;               /* 0x00 */
+    struct CObject m_Object;               /* 0x00 */
     u32 m_dwReadPtr;                        /* 0x38 */
     u32 m_dwWritePtr;                       /* 0x3C */
     u8 *m_Fifo;                             /* 0x40 */
@@ -191,7 +160,7 @@ struct c_fifo {
  * CChannel (0x1190 bytes)
  * ============================================ */
 struct c_channel {
-    struct c_object m_Object;               /* 0x000 */
+    struct CObject m_Object;               /* 0x000 */
     void *Open;                             /* 0x038 */
     void *Close;                            /* 0x040 */
     void *Start;                            /* 0x048 */
@@ -219,7 +188,7 @@ struct c_channel {
     u32 m_dwOpenFlags;                      /* 0x0F8 */
     u8 _pad1[4];                            /* 0x0FC */
     void (*m_pDeviceCallback)(struct c_channel *channel, u32 event,
-                              struct qp_buffer_descriptor *desc, void *context);  /* 0x100 */
+                              struct _QP_BUFFER_DESCRIPTOR *desc, void *context);  /* 0x100 */
     void *m_callbackContext;                /* 0x108 */
     u32 m_hTask;                            /* 0x110 */
     u32 m_hChannel;                         /* 0x114 */
@@ -232,7 +201,7 @@ struct c_channel {
     u32 m_State;                            /* 0x134 */
     int m_bPaused;                          /* 0x138 */
     u8 _pad2[4];                            /* 0x13C */
-    struct queue_entry m_Entries[256];      /* 0x140 - 256 * 0x10 = 0x1000 */
+    struct QUEUE_ENTRY m_Entries[256];      /* 0x140 - 256 * 0x10 = 0x1000 */
     struct c_queue *m_pFreeQueue;           /* 0x1140 */
     struct c_queue *m_pDataRequestQueue;    /* 0x1148 */
     struct c_queue *m_pDataPendingQueue;    /* 0x1150 */
@@ -276,41 +245,10 @@ struct c_thread {
 };
 
 /* ============================================
- * IMpegCodec (0xC8 = 200 bytes)
- * ============================================ */
-struct i_mpeg_codec {
-    void *InitDevice;                       /* 0x00 */
-    void *Release;                          /* 0x08 */
-    void *Reset;                            /* 0x10 */
-    void *Set;                              /* 0x18 */
-    void *Get;                              /* 0x20 */
-    void *AllocEncodeTask;                  /* 0x28 */
-    void *AllocDecodeTask;                  /* 0x30 */
-    void *ReleaseTask;                      /* 0x38 */
-    void *Open;                             /* 0x40 */
-    void *Close;                            /* 0x48 */
-    void *Start;                            /* 0x50 */
-    void *Stop;                             /* 0x58 */
-    void *Acquire;                          /* 0x60 */
-    void *Pause;                            /* 0x68 */
-    void *Step;                             /* 0x70 */
-    void *SetRate;                          /* 0x78 */
-    void *GetRate;                          /* 0x80 */
-    void *BeginFlush;                       /* 0x88 */
-    void *Flush;                            /* 0x90 */
-    void *EndFlush;                         /* 0x98 */
-    void *AddBuffer;                        /* 0xA0 */
-    void *CancelBuffer;                     /* 0xA8 */
-    void *TimeoutBuffer;                    /* 0xB0 */
-    void *GetTime;                          /* 0xB8 */
-    void *XferData;                         /* 0xC0 */
-};
-
-/* ============================================
  * IHCIAPI (0x1C0 = 448 bytes)
  * ============================================ */
 struct ihciapi {
-    struct c_object m_Object;               /* 0x00 */
+    struct CObject m_Object;               /* 0x00 */
     struct c_thread m_Thread;               /* 0x38 */
 
     void *ReadHciRegister;                  /* 0x98 */
@@ -374,7 +312,7 @@ struct task_io_pending {
  * Task Data (0x64C = 1612 bytes)
  * ============================================ */
 struct task_data {
-    struct c_object m_Object;               /* 0x00 */
+    struct CObject m_Object;               /* 0x00 */
     u32 id;                                 /* 0x38 */
     int valid;                              /* 0x3C */
     u32 type;                               /* 0x40 */
@@ -483,7 +421,7 @@ struct task_data {
  * CTask (0x3498 bytes)
  * ============================================ */
 struct c_task {
-    struct c_object m_Object;               /* 0x00 */
+    struct CObject m_Object;               /* 0x00 */
     struct c_thread m_Thread;               /* 0x38 */
 
     void *Alloc;                            /* 0x98 */
@@ -518,7 +456,7 @@ struct c_task {
     struct t_event_block *m_EvtDmaReqComplete;              /* 0x33E0 */
     struct task_io_pending m_ioPending[2];  /* 0x33E8 */
     struct task_io_pending *m_pPending[2];  /* 0x3440 */
-    struct c_object m_CritSectionIOPending; /* 0x3450 */
+    struct CObject m_CritSectionIOPending; /* 0x3450 */
     u32 m_dwMaxDMASize;                     /* 0x3488 */
     int m_StartID;                          /* 0x348C */
     u32 m_taskIdPCMOut;                     /* 0x3490 */
@@ -529,8 +467,8 @@ struct c_task {
  * CQLCodec (0x42C bytes)
  * ============================================ */
 struct cql_codec {
-    struct c_object m_Object;               /* 0x000 */
-    struct i_mpeg_codec m_iMpegCodec;       /* 0x038 */
+    struct CObject m_Object;               /* 0x000 */
+    struct IMpegCodec m_iMpegCodec;       /* 0x038 */
     struct ihciapi m_hci;                   /* 0x100 */
 
     int m_bHCIInited;                       /* 0x2C0 */
@@ -563,7 +501,7 @@ struct cql_codec {
     u16 m_ENC_REG_AUDIO_CONTROL_EX;         /* 0x328 */
     u8 _pad2[6];                            /* 0x32A */
 
-    struct c_object_mgr *m_pChannelMgr;
+    struct CObjectMgr *m_pChannelMgr;
 
     /* Video output config */
     int m_VOEnable;                         /* 0x338 */
@@ -907,7 +845,7 @@ struct qp_codeclib_initdata {
  * CQLCodecLib (0x240 = 576 bytes)
  * ============================================ */
 struct cql_codec_lib {
-    struct c_object m_Object;               /* 0x000 */
+    struct CObject m_Object;               /* 0x000 */
     struct i_codec_lib m_iCodecLib;         /* 0x038 */
     void *m_pDO;                            /* 0x0A0 */
     void *m_PDOLayered;                     /* 0x0A8 */
@@ -936,7 +874,7 @@ struct project_c985 {
     u8 _padding[8];                         /* 0x00 */
     void *m_pDevice;                        /* 0x08 */
     struct i_codec_lib *m_pCodec;           /* 0x10 */
-    struct i_mpeg_codec *m_pMpegCodec;      /* 0x18 */
+    struct IMpegCodec *m_pMpegCodec;      /* 0x18 */
     void *m_pNuc100;                        /* 0x20 - InterfaceNUC100* */
     void *m_pTi3101;                        /* 0x28 - TI3101* */
     enum c985_video_input m_c985_video_in;  /* 0x30 */
@@ -979,15 +917,19 @@ struct c_yuv_in_channel {
 struct c985_buffer {
     struct vb2_v4l2_buffer vb;
     struct list_head list;
-    struct qp_buffer_descriptor *buf_desc;
-    struct qp_ksstream_header *header;
-    struct queue_entry *queue_entry;
+    struct _QP_BUFFER_DESCRIPTOR *buf_desc;
+    struct _QP_KSSTREAM_HEADER *header;
+    struct QUEUE_ENTRY *queue_entry;
 };
 
 /* ============================================
  * c985_poc - Main Device Structure
  * ============================================ */
 struct c985_poc {
+
+    struct cyuv_out_pin yuv_pin;    /* YUV input pin */
+    struct cpcm_out_pin comp_pin;   /* Compressed output pin */
+
     u32 active_task_id;  /* Currently active encoder task (0-7, or -1 if none) */
 
     /* Project structure - C985-specific logic */

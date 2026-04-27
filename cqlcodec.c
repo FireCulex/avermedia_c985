@@ -18,10 +18,12 @@
 #include "ctask/ctask_private.h"
 #include "cobject.h"
 #include "interrupts.h"
+#include "sync.h"
 #include "structs.h"
 #include "pciecntl.h"
 #include "channel.h"
 #include "qpmm.h"
+#include "include/abi/cchannel.h"
 
 /* Forward declaration */
 static void cqlcodec_interrupt_handler(struct work_struct *work);
@@ -974,7 +976,7 @@ int CQLCodec_UpdateEncoderConfig(struct c985_poc *d, u32 param_2, int param_3)
     return ret;
 }
 
-struct c985_poc *CQLCodec_Constructor(struct c985_poc *d, struct c_object *param_2,
+struct c985_poc *CQLCodec_Constructor(struct c985_poc *d, struct CObject *param_2,
                                       u32 param_3, void *param_4, void *param_5)
 {
 
@@ -1119,17 +1121,17 @@ int CQLCodec_IsCodecIdle(struct c985_poc *d)
     return 1;
 }
 
-int CQLCodec_AddBuffer(struct c985_poc *d, u32 param_2,
-                       struct qp_buffer_descriptor *param_3)
+int CQLCodec_AddBuffer(struct IMpegCodec *d, u32 param_2,
+                       struct _QP_BUFFER_DESCRIPTOR *param_3)
 {
-    dev_info(&d->pdev->dev, "AddBuffer: stream=%u buf=%px size=%u\n",
+    pr_debug("AddBuffer: stream=%u buf=%px size=%u\n",
              param_2, param_3->pBuffer, param_3->ulBufferSize);
 
     /* TODO: Add to queue, setup DMA */
     return 0;
 }
 
-_EQPErrors CQLCodec_Open(struct i_mpeg_codec *codec_iface,
+_EQPErrors CQLCodec_Open(struct IMpegCodec *codec_iface,
                          u32 task_id,
                          u32 channel_type,
                          void *param_4,
@@ -1143,7 +1145,7 @@ _EQPErrors CQLCodec_Open(struct i_mpeg_codec *codec_iface,
     u32 handle;
     _EQPErrors ret;
 
-    /* Get parent cql_codec from i_mpeg_codec */
+    /* Get parent cql_codec from IMpegCodec */
     codec = container_of(codec_iface, struct cql_codec, m_iMpegCodec);
     task = codec->m_pTask;
 
@@ -1262,7 +1264,7 @@ int CQLCodecLibBusCallback(void *context, u32 event_type, void *param)
     return QPERR_SUCCESS;
 }
 
-_EQPErrors CQLCodec_Close(struct i_mpeg_codec *iface, u32 handle)
+_EQPErrors CQLCodec_Close(struct IMpegCodec *iface, u32 handle)
 {
     struct cql_codec *codec;
     struct c985_poc *poc;
@@ -1352,4 +1354,33 @@ void CQLCodec_ClrCodecError(struct cql_codec *param_1)
     pr_debug("CQLCodec_ClrCodecError() - NEEDS IMPLEMENTING\n");
 
     /* TODO: implement */
+}
+/* In cqlcodec.c or appropriate file */
+
+_EQPErrors CQLCodec_Stop(struct IMpegCodec *this, u32 hStream)
+{
+    _EQPErrors ret;
+    void *channel;
+    struct CObjectMgr *channel_mgr;
+
+    pr_debug("CQLCodec_Stop() hStream(%d)\n", hStream);
+
+    /* Get channel manager from IMpegCodec - offset 3 * sizeof(void*) = 0x18 into vtable area */
+    /* param_1[3].AddBuffer is actually m_pChannelMgr at some offset */
+    channel_mgr = (struct CObjectMgr *)((u8 *)this + 0x330);  /* adjust offset as needed */
+
+    channel = CObjectMgr_GetObjectByHandle(channel_mgr, hStream);
+    if (!channel) {
+        ret = QPERR_PARMS;
+    } else {
+        /* Call Stop vtable function at offset 0x50 */
+        struct CChannel *ch = (struct CChannel *)channel;
+        if (ch->Stop) {
+            ret = ch->Stop(ch);
+        } else {
+            ret = QPERR_PARMS;
+        }
+    }
+
+    return ret;
 }

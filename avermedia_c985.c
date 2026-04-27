@@ -21,6 +21,7 @@
 #include "qpfwencapi.h"
 #include "cqlcodec_done.h"
 #include "dma.h"
+#include "include/abi/cqueue.h"
 
 MODULE_DESCRIPTION(DRV_DESC);
 
@@ -160,7 +161,7 @@ static int CDEVICE__Init(struct pci_dev *pdev, const struct pci_device_id *id)
 
     /* === Struct Size Debug === */
     dev_info(&pdev->dev, "=== Struct Size Debug ===\n");
-    dev_info(&pdev->dev, "sizeof(struct c_object) = %zu (expected 56)\n", sizeof(struct c_object));
+    dev_info(&pdev->dev, "sizeof(struct CObject) = %zu (expected 56)\n", sizeof(struct CObject));
     dev_info(&pdev->dev, "sizeof(struct task_user_buffer) = %zu (expected 48)\n", sizeof(struct task_user_buffer));
     dev_info(&pdev->dev, "sizeof(struct task_arm_buffer) = %zu (expected 60)\n", sizeof(struct task_arm_buffer));
     dev_info(&pdev->dev, "sizeof(struct task_arm_request) = %zu (expected 72)\n", sizeof(struct task_arm_request));
@@ -178,7 +179,7 @@ static int CDEVICE__Init(struct pci_dev *pdev, const struct pci_device_id *id)
     dev_info(&pdev->dev, "sizeof(struct arm_buffer_all) = %zu (expected 56)\n", sizeof(struct arm_buffer_all));
     dev_info(&pdev->dev, "sizeof(struct c_channel) = %zu (expected 0x1190 = %zu)\n", sizeof(struct c_channel), (size_t)0x1190);
     dev_info(&pdev->dev, "sizeof(struct c_queue) = %zu (expected 0x50 = %zu)\n", sizeof(struct c_queue), (size_t)0x50);
-    dev_info(&pdev->dev, "sizeof(struct i_mpeg_codec) = %zu (expected 0xC8 = %zu)\n", sizeof(struct i_mpeg_codec), (size_t)0xC8);
+    dev_info(&pdev->dev, "sizeof(struct IMpegCodec) = %zu (expected 0xC8 = %zu)\n", sizeof(struct IMpegCodec), (size_t)0xC8);
     dev_info(&pdev->dev, "sizeof(struct c_channel) = %zu (expected 0x1190 = %zu)\n", sizeof(struct c_channel), (size_t)0x1190);
 
 

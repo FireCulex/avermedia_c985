@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/spinlock.h>
+#include <linux/mutex.h>
+#include <linux/slab.h>
 #include "cobject.h"
 #include "qperrors.h"
+#include "sync.h"
+#include "qposm.h"
 
-void CObject_Constructor(struct c_object *param_1, struct c_object *param_2, u32 param_3)
+void CObject_Constructor(struct CObject *param_1, struct CObject *param_2, u32 param_3)
 {
     param_1->m_pParent = param_2;
     param_1->m_dwObjectAttributes = param_3;
@@ -23,10 +27,10 @@ void CObject_Constructor(struct c_object *param_1, struct c_object *param_2, u32
 
     param_1->m_irql = 0;
 }
-void CObjectMgr_RemoveObjects(struct c_object_mgr *mgr)
+void CObjectMgr_RemoveObjects(struct CObjectMgr *mgr)
 {
-    struct c_object_entry *entry;
-    struct c_object_entry *next;
+    struct CObjectEntry *entry;
+    struct CObjectEntry *next;
 
     if (!mgr)
         return;
@@ -53,7 +57,7 @@ void CObjectMgr_RemoveObjects(struct c_object_mgr *mgr)
     mgr->m_pHead = NULL;
 }
 
-void CObject_Destructor(struct c_object *obj)
+void CObject_Destructor(struct CObject *obj)
 {
     if (!obj)
         return;
@@ -74,7 +78,7 @@ void CObject_Destructor(struct c_object *obj)
     }
 }
 
-void CObjectMgr_Destructor(struct c_object_mgr *mgr)
+void CObjectMgr_Destructor(struct CObjectMgr *mgr)
 {
     if (!mgr)
         return;
@@ -86,25 +90,25 @@ void CObjectMgr_Destructor(struct c_object_mgr *mgr)
     CObject_Destructor(&mgr->m_Object);
 }
 
-void CObject_Lock(struct c_object *param_1)
+void CObject_Lock(struct CObject *param_1)
 {
     /* TODO: implement from Ghidra if needed */
 }
 
-void CObject_Unlock(struct c_object *param_1)
+void CObject_Unlock(struct CObject *param_1)
 {
     /* TODO: implement from Ghidra if needed */
 }
-u32 CObjectMgr_AddObject(struct c_object *mgr, void *obj)
+u32 CObjectMgr_AddObject(struct CObject *mgr, void *obj)
 {
 static u32 h = 0x1000; return h++;
     /* TODO: implement from Ghidra if needed */
 }
-void *CObjectMgr_RemoveObject(struct c_object_mgr *mgr, u32 handle)
+void *CObjectMgr_RemoveObject(struct CObjectMgr *mgr, u32 handle)
 {
-    struct c_object_entry *entry;
-    struct c_object_entry *prev;
-    struct c_object_entry *to_free;
+    struct CObjectEntry *entry;
+    struct CObjectEntry *prev;
+    struct CObjectEntry *to_free;
     void *object;
 
     /* Lock the manager using base CObject lock */
@@ -148,4 +152,86 @@ void *CObjectMgr_RemoveObject(struct c_object_mgr *mgr, u32 handle)
     }
 
     return object;
+}
+
+u32 CppObject_WhoAmI(struct CObject *this)
+{
+    /* TODO: m_dwWhoAmI not yet defined in struct */
+    return 0;
+    // return this->m_dwWhoAmI;
+}
+
+int CObject_IsInitialized(struct CObject *obj)
+{
+    return obj->m_fInitialized;
+}
+EXPORT_SYMBOL_GPL(CObject_IsInitialized);
+
+/* In sync.c - add implementation */
+void CppObject_enterCritical(struct CppObject *this)
+{
+    if (!this)
+        return;
+
+    if ((this->m_dwObjectAttributes & 1) != 0) {
+        /* Use spinlock */
+        this->m_irql = KeAcquireSpinLockRaiseToDpc(&this->m_spinlock);
+    } else if ((this->m_dwObjectAttributes & 2) != 0) {
+        /* Use mutex */
+        KeWaitForSingleObject(&this->m_mutex, 0, 0, 0, 0);
+    }
+}
+EXPORT_SYMBOL_GPL(CppObject_enterCritical);
+
+void CppObject_leaveCritical(struct CppObject *this)
+{
+    if (!this)
+        return;
+
+    if ((this->m_dwObjectAttributes & 1) != 0) {
+        /* Release spinlock */
+        KeReleaseSpinLock(&this->m_spinlock, this->m_irql);
+    } else if ((this->m_dwObjectAttributes & 2) != 0) {
+        /* Release mutex */
+        KeReleaseMutex(&this->m_mutex, 0);
+    }
+}
+
+/* In cobject.c */
+
+void *CObjectMgr_GetObjectByHandle(struct CObjectMgr *this, u32 handle)
+{
+    void *result = NULL;
+    struct CObjectEntry *entry;
+    u32 i;
+
+    if (!this)
+        return NULL;
+
+    /* Enter critical section */
+    if ((this->m_Object.m_dwObjectAttributes & 1) != 0) {
+        this->m_Object.m_irql = KeAcquireSpinLockRaiseToDpc(&this->m_Object.m_spinlock);
+    } else if ((this->m_Object.m_dwObjectAttributes & 2) != 0) {
+        if (this->m_Object.m_semCriticalSection)
+            QPOSMWaitSem(this->m_Object.m_semCriticalSection, -1);
+    }
+
+    /* Walk the linked list looking for matching handle */
+    entry = this->m_pHead;
+    for (i = 0; i < this->m_dwObjectNb; i++) {
+        if (entry->hObject == handle) {
+            result = entry->pObject;
+        }
+        entry = entry->pNext;
+    }
+
+    /* Leave critical section */
+    if ((this->m_Object.m_dwObjectAttributes & 1) != 0) {
+        KeReleaseSpinLock(&this->m_Object.m_spinlock, this->m_Object.m_irql);
+    } else if ((this->m_Object.m_dwObjectAttributes & 2) != 0) {
+        if (this->m_Object.m_semCriticalSection)
+            QPOSMSignalSem(this->m_Object.m_semCriticalSection);
+    }
+
+    return result;
 }

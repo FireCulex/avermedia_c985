@@ -19,6 +19,7 @@ int QPOSMDeleteEvtgrp(void *evtgrp);
 int QPOSMDeleteSem(void *sem);
 void QPOSMDeleteMutex(void *mutex);
 int QPOSMLockMutex(void *mutex);
-
+int QPOSMWaitSem(void *sem, int timeout_ms);
+int QPOSMSignalSem(void *sem);
 
 #endif /* QPOSM_H */

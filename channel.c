@@ -5,25 +5,45 @@
 
 #include <linux/slab.h>
 #include "types.h"
-#include "structs.h"      /* Has struct queue_entry */
+#include "structs.h"      /* Has struct QUEUE_ENTRY */
 #include "queue.h"        /* Has struct c_queue */
 #include "channel.h"
 #include "cobject.h"
 #include "ctask/ctask.h"
-
+#include "qperrors.h"
+#include "pins.h"
+#include "include/abi/qp_buffer_descriptor.h"
+#include "include/abi/_qp_ksstream_header.h"
+#include "include/abi/cqueue.h"
 
 /* Get c985_poc from embedded cql_codec */
 #define codec_to_poc(c) container_of(c, struct c985_poc, codec)
 
+_EQPErrors CChannel_DeviceCallback(struct c_channel *channel,
+                                   u32 param,
+                                   void *data)
+{
+    /* Validate channel state and context */
+    if (!channel || !channel->m_bOpened || !channel->m_callbackContext)
+        return QPERR_FAIL;
+
+    /* Directly call the known callback implementation */
+    return CDataPin_StreamCallback((struct c_data_pin *)channel->m_callbackContext,
+                                   param,
+                                   data);
+}
+
+
 int CYUVInChannel_GetBuffer(struct c_channel *channel,
-                            struct qp_buffer_descriptor **buf_desc,
+                            struct _QP_BUFFER_DESCRIPTOR **buf_desc,
                             u8 **buffer,
                             u32 *size)
 {
     struct c985_poc *poc;
-    struct queue_entry *entry;
-    struct qp_buffer_descriptor *desc;
-    struct qp_ksstream_header *header;
+    struct QUEUE_ENTRY *entry;
+    struct _QP_BUFFER_DESCRIPTOR *desc;
+    struct _QP_KSSTREAM_HEADER
+ *header;
     struct c_yuv_in_channel *yuv_channel;
 
     if (!channel || !buf_desc || !buffer || !size)
@@ -35,7 +55,7 @@ int CYUVInChannel_GetBuffer(struct c_channel *channel,
     /* Get entry from request queue */
     entry = CQueue_GetOneEntry(channel->m_pDataRequestQueue);
     if (!entry) {
-        dev_dbg(&poc->pdev->dev, "CYUVInChannel_GetBuffer: no entries in queue\n");
+        pr_debug("CYUVInChannel_GetBuffer() no entries in queue\n");
         return 0;
     }
 
@@ -47,51 +67,64 @@ int CYUVInChannel_GetBuffer(struct c_channel *channel,
 
     /* Check for ENDOFSTREAM or zero size */
     if ((header->OptionsFlags & 0x200) || (desc->ulBufferSize == 0)) {
-        dev_dbg(&poc->pdev->dev, "CYUVInChannel_GetBuffer: ENDOFSTREAM\n");
+        pr_debug("CYUVInChannel_GetBuffer() QP_KSSTREAM_HEADER_OPTIONSF_ENDOFSTREAM\n");
         desc->ulFlags |= 0x20000;
     }
 
     /* Check buffer size against frame size */
     if (desc->ulBufferSize < yuv_channel->m_dwFrameSize) {
-        dev_err(&poc->pdev->dev,
-                "CYUVInChannel_GetBuffer: buffer size(%u) < frame size(%u)\n",
-                desc->ulBufferSize, yuv_channel->m_dwFrameSize);
+        pr_debug("CYUVInChannel_GetBuffer() buffer size(%d) < frame size(%d)\n",
+                 desc->ulBufferSize, yuv_channel->m_dwFrameSize);
+
         entry->Data = NULL;
         CQueue_AddEntry(channel->m_pFreeQueue, entry);
+
+        /* Ensure Status is cleared before callback */
         desc->Status = 0;
+
+        /* CChannel_DeviceCallback is a wrapper that passes m_callbackContext as 'this' */
         CChannel_DeviceCallback(channel, 0x10000, desc);
+
         return 0;
     }
+    else {
+        /* Success Path */
 
-    /* Set buffer info */
-    desc->ulBufferIndex = 0;
-    desc->ulBufferOffset = 0;
-    desc->ulTotalUsed = 0;
+        /* Check PTS Flag (0x40000) */
+        if ((desc->ulFlags & 0x40000) != 0) {
+            pr_debug("CYUVInChannel_GetBuffer() PTS(%u) KSTime(%lu:%lu) Numerator(%d) Denominator(%d)\n");
+        }
 
-    *buffer = header->Data;
-    *size = desc->ulBufferSize;
-    *buf_desc = desc;
+        /* Set buffer info */
+        desc->ulBufferIndex = 0;
+        desc->ulBufferOffset = 0;
+        desc->ulTotalUsed = 0;
 
-    dev_dbg(&poc->pdev->dev,
-            "CYUVInChannel_GetBuffer: buffer=%p size=%u desc=%p frame=%u\n",
-            *buffer, *size, *buf_desc, yuv_channel->m_dwFrameSize);
+        *buffer = header->Data;
+        *size = desc->ulBufferSize;
+        *buf_desc = desc;
 
-    /* Move to pending queue */
-    CQueue_AddEntry(channel->m_pDataPendingQueue, entry);
+        pr_debug("CYUVInChannel_GetBuffer() buffer(0x%x) size(%d) Desc(0x%x) frame(%d)\n",
+                 *buffer, *size, *buf_desc, yuv_channel->m_dwFrameSize);
 
-    return 1;
+        /* Move to pending queue */
+        CQueue_AddEntry(channel->m_pDataPendingQueue, entry);
+
+        return 1;
+    }
 }
 int CYUVInChannel_GetBufferYUV(struct c_channel *channel,
-                               struct qp_buffer_descriptor **buf_desc,
+                               struct _QP_BUFFER_DESCRIPTOR **buf_desc,
                                u8 **y_buffer,
                                u32 *y_size,
                                u8 **uv_buffer,
                                u32 *uv_size)
 {
     struct c985_poc *poc;
-    struct queue_entry *entry;
-    struct qp_buffer_descriptor *desc;
-    struct qp_ksstream_header *header;
+    struct QUEUE_ENTRY *entry;
+    struct _QP_BUFFER_DESCRIPTOR *desc;
+    struct _QP_KSSTREAM_HEADER
+ *header;
     struct c_yuv_in_channel *yuv_channel;
     u32 frame_size;
 
@@ -171,7 +204,7 @@ int CYUVInChannel_Start(struct c_channel *channel)
 }
 
 int CYUVInChannel_GetBufferRas(struct c_channel *channel,
-                               struct qp_buffer_descriptor **buf_desc,
+                               struct _QP_BUFFER_DESCRIPTOR **buf_desc,
                                u8 **y_buffer,
                                u32 *y_size,
                                u8 **u_buffer,
@@ -180,10 +213,10 @@ int CYUVInChannel_GetBufferRas(struct c_channel *channel,
                                u32 *v_size)
 {
     struct c985_poc *poc;
-    struct c_object *parent;
-    struct queue_entry *entry;
-    struct qp_buffer_descriptor *desc;
-    struct qp_ksstream_header *header;
+    struct CObject *parent;
+    struct QUEUE_ENTRY *entry;
+    struct _QP_BUFFER_DESCRIPTOR *desc;
+    struct _QP_KSSTREAM_HEADER *header;
     struct c_yuv_in_channel *yuv_channel;
     u32 frame_size;
     int can_swap;
@@ -284,11 +317,11 @@ int CYUVInChannel_GetBufferRas(struct c_channel *channel,
  * Moves the buffer from Pending queue back to Free queue.
  */
 int CYUVInChannel_CompleteBuffer(struct c_channel *channel,
-                                 struct qp_buffer_descriptor *buf_desc)
+                                 struct _QP_BUFFER_DESCRIPTOR *buf_desc)
 {
     struct c985_poc *poc;
     struct c_yuv_in_channel *yuv_channel;
-    struct queue_entry *entry;
+    struct QUEUE_ENTRY *entry;
 
     /* NULL checks FIRST, before accessing anything */
     if (!channel || !buf_desc)
@@ -422,9 +455,9 @@ int CChannel_BeginFlush(struct c_channel *param_1)
     return 0;
 }
 
-int CChannel_RecycleEntry(struct c_channel *channel, struct queue_entry *entry, int cancel)
+int CChannel_RecycleEntry(struct c_channel *channel, struct QUEUE_ENTRY *entry, int cancel)
 {
-    struct qp_buffer_descriptor *desc;
+    struct _QP_BUFFER_DESCRIPTOR *desc;
     void *data;
     int ret;
 
@@ -453,7 +486,7 @@ int CChannel_RecycleEntry(struct c_channel *channel, struct queue_entry *entry, 
 
     /* Clear status in buffer descriptor */
     if (data) {
-        desc = (struct qp_buffer_descriptor *)data;
+        desc = (struct _QP_BUFFER_DESCRIPTOR *)data;
         /*
          * Offset 0x34 in qp_buffer_descriptor is Status (u8) followed by _pad1[3].
          * Decomp writes undefined4 (4 bytes), so we clear Status and padding.
@@ -476,7 +509,7 @@ int CChannel_Flush(struct c_channel *channel)
     struct c_task *task;
     struct cql_codec *codec;
     struct c985_poc *poc;
-    struct queue_entry *entry;
+    struct QUEUE_ENTRY *entry;
     int ret;
 
     if (!channel)
@@ -570,7 +603,7 @@ int CChannel_GetYUVFormat(struct c_channel *param_1, u32 *format)
 /* ================================================================
  * CChannel_Constructor - from Ghidra
  * ================================================================ */
-struct c_channel *CChannel_Constructor(struct c_channel *param_1, struct c_object *param_2,
+struct c_channel *CChannel_Constructor(struct c_channel *param_1, struct CObject *param_2,
                                        u32 param_3, u32 param_4, int param_5, int param_6,
                                        enum channel_direction param_7, u32 param_8,
                                        struct c_task *param_9)
@@ -713,7 +746,7 @@ int CChannel_Open(struct c_channel *param_1, u32 param_2, u32 param_3, void *par
     param_1->m_callbackContext = param_6;
 
     for (i = 0; i < 256; i++) {
-        memset(&param_1->m_Entries[i], 0, sizeof(struct queue_entry));
+        memset(&param_1->m_Entries[i], 0, sizeof(struct QUEUE_ENTRY));
     }
 
     param_1->m_State = 0;
@@ -811,7 +844,7 @@ void CChannel_Destructor(struct c_channel *param_1)
 /* ================================================================
  * CAESOutChannel_Constructor - from Ghidra
  * ================================================================ */
-struct c_channel *CAESOutChannel_Constructor(struct c_channel *param_1, struct c_object *param_2,
+struct c_channel *CAESOutChannel_Constructor(struct c_channel *param_1, struct CObject *param_2,
                                              u32 param_3, u32 param_4, struct c_task *param_5)
 {
     struct c_channel *pCVar1;
@@ -839,7 +872,7 @@ struct c_channel *CAESOutChannel_Constructor(struct c_channel *param_1, struct c
 /* ================================================================
  * CYUVInChannel_Constructor - from Ghidra
  * ================================================================ */
-struct c_channel *CYUVInChannel_Constructor(struct c_channel *param_1, struct c_object *param_2,
+struct c_channel *CYUVInChannel_Constructor(struct c_channel *param_1, struct CObject *param_2,
                                             u32 param_3, u32 param_4, struct c_task *param_5)
 {
     struct c_channel *pCVar1;
@@ -937,7 +970,7 @@ int CYUVInChannel_Open(struct c_channel *param_1, u32 param_2, u32 param_3,
 /* ================================================================
  * CPCMInChannel_Constructor - from Ghidra
  * ================================================================ */
-struct c_channel *CPCMInChannel_Constructor(struct c_channel *param_1, struct c_object *param_2,
+struct c_channel *CPCMInChannel_Constructor(struct c_channel *param_1, struct CObject *param_2,
                                             u32 param_3, u32 param_4, struct c_task *param_5)
 {
     struct c_channel *pCVar1;
@@ -963,7 +996,7 @@ struct c_channel *CPCMInChannel_Constructor(struct c_channel *param_1, struct c_
 /* Linux Native */
 
 int CMPEGOutChannel_GetBuffer(struct c_channel *channel,
-                              struct qp_buffer_descriptor **buf_desc,
+                              struct _QP_BUFFER_DESCRIPTOR **buf_desc,
                               u8 **buffer,
                               u32 *size)
 {
@@ -1041,7 +1074,7 @@ int CMPEGOutChannel_CompleteBuffer(struct c_channel *channel, u32 bytes_used)
     return 1;
 }
 /* Linux Native */
-struct c_channel *CMPEGOutChannel_Constructor(struct c_channel *param_1, struct c_object *param_2,
+struct c_channel *CMPEGOutChannel_Constructor(struct c_channel *param_1, struct CObject *param_2,
                                               u32 param_3, u32 param_4, struct c_task *param_5)
 {
     struct c_channel *pCVar1;
@@ -1119,3 +1152,4 @@ int CVBIOutChannel_GetVBIFormat(struct c_vbi_out_channel *chan, struct qp_vbi_da
     return -1;
 }
 */
+

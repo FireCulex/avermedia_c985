@@ -284,3 +284,17 @@ void QPOSMDeleteMutex(void *mutex)
         QPOSMDeleteSem(mutex);
     }
 }
+
+int QPOSMWaitSem(void *sem, int timeout_ms)
+{
+    if (!sem)
+        return -EINVAL;
+    return 0;
+}
+
+int QPOSMSignalSem(void *sem)
+{
+    if (!sem)
+        return -EINVAL;
+    return 0;
+}

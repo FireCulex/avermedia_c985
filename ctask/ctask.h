@@ -11,6 +11,12 @@
 #include <linux/types.h>
 #include "../structs.h"
 #include "../types.h"
+#include "../include/abi/ccapturefilter.h"
+#include "../include/abi/cencoderfilter.h"
+#include "../include/abi/cdecoderfilter.h"
+#include "../include/abi/qp_process_type.h"
+
+
 
 /* ============================================
  * Constants
@@ -43,7 +49,7 @@
 /* ============================================
  * Constructor / Destructor
  * ============================================ */
-struct c_task *CTask_Constructor(struct c_task *task, struct c_object *parent,
+struct c_task *CTask_Constructor(struct c_task *task, struct CObject *parent,
                                  u32 param_3, u32 param_4, struct cql_codec *codec,
                                  void *evt_wait, void *evt_reply);
 void CTask_Destructor(struct c_task *task);
@@ -132,7 +138,7 @@ void CDecoderTask_ProcessIoComplete(struct c_task *task, struct task_data *td,
 
 /* ============================================
  * Encoder/Decoder Start
- * ============================================ */
+ * ===================================_EQPErrors========= */
 int CEncoderTask_Start(struct c_task *task, u32 task_id);
 int CDecoderTask_Start(struct c_task *task, u32 task_id);
 
@@ -179,7 +185,7 @@ void CThread_ThreadDone(struct c_thread *thread);
 /* ============================================
  * FIFO
  * ============================================ */
-struct c_fifo *CFifo_Constructor(struct c_fifo *fifo, struct c_object *parent,
+struct c_fifo *CFifo_Constructor(struct c_fifo *fifo, struct CObject *parent,
                                  u32 attr, u32 size, u32 entry_size);
 void CFifo_Destructor(struct c_fifo *fifo);
 int CFifo_GetFifo(struct c_fifo *fifo, void *entry);
@@ -190,7 +196,6 @@ u32 CFifo_GetFifoLevel(struct c_fifo *fifo);
  * Channel
  * ============================================ */
 int CChannel_needByteSwapping(struct c_channel *ch);
-int CChannel_DeviceCallback(struct c_channel *ch, u32 param, void *data);
 
 /* ============================================
  * Helpers
@@ -198,5 +203,14 @@ int CChannel_DeviceCallback(struct c_channel *ch, u32 param, void *data);
 int CTask_isIOReady(struct c_task *task, enum channel_direction dir);
 int CTask_UseVideoInputDevice(struct c_task *task, struct task_data *td);
 int CTask_NeedVideoInputDevice(struct c_task *task);
+
+ulong CTaskRawAudio_getTaskHandle(struct CTaskRawAudio *this);
+ulong CDecoderFilter_GetTaskHandle(struct CDecoderFilter *this);
+ulong CEncoderFilter_GetEncodeTaskHandle(struct CEncoderFilter *this);
+ulong CCaptureFilter_GetRawVideoTaskHandle(struct CCaptureFilter *this);
+ulong CCaptureFilter_GetRawAudioTaskHandle(struct CCaptureFilter *this);
+enum qp_process_type CEncoderFilter_getProcessName(struct CEncoderFilter *filter);
+int CCaptureFilter_ProcessName_Setting(struct CCaptureFilter *filter, enum qp_process_type process_type);
+
 
 #endif /* CTASK_H */

@@ -7,6 +7,11 @@
 #include "queue.h"
 #include "cobject.h"
 #include "structs.h"
+#include "qposm.h"
+#include "v4l2.h"
+#include "pins.h"
+#include "sync.h"
+#include "include/abi/cqueue.h"
 
 #define codec_to_poc(c) container_of(c, struct c985_poc, codec)
 
@@ -21,7 +26,7 @@ void CQueue_ResetQueue(struct c_queue *queue)
     queue->m_dwNbInQueue = 0;
 }
 
-struct c_queue *CQueue_Constructor(struct c_queue *queue, struct c_object *parent, u32 attr)
+struct c_queue *CQueue_Constructor(struct c_queue *queue, struct CObject *parent, u32 attr)
 {
     if (!queue)
         return NULL;
@@ -42,9 +47,9 @@ void CQueue_Destructor(struct c_queue *queue)
     CObject_Destructor(&queue->m_Object);
 }
 
-struct queue_entry *CQueue_GetOneEntry(struct c_queue *queue)
+struct QUEUE_ENTRY *CQueue_GetOneEntry(struct c_queue *queue)
 {
-    struct queue_entry *entry = NULL;
+    struct QUEUE_ENTRY *entry = NULL;
     unsigned long flags = 0;
 
     if (!queue)
@@ -92,11 +97,11 @@ struct queue_entry *CQueue_GetOneEntry(struct c_queue *queue)
             return entry;
 }
 
-struct queue_entry *CQueue_GetEntryByData(struct c_queue *queue, void *data)
+struct QUEUE_ENTRY *CQueue_GetEntryByData(struct c_queue *queue, void *data)
 {
-    struct queue_entry *curr;      /* ← Declared but not used! */
-    struct queue_entry *prev = NULL;
-    struct queue_entry *found = NULL;
+    struct QUEUE_ENTRY *curr;      /* ← Declared but not used! */
+    struct QUEUE_ENTRY *prev = NULL;
+    struct QUEUE_ENTRY *found = NULL;
     unsigned long flags = 0;
 
     if (!queue)
@@ -147,7 +152,7 @@ struct queue_entry *CQueue_GetEntryByData(struct c_queue *queue, void *data)
             return found;
 }
 
-void CQueue_AddEntry(struct c_queue *queue, struct queue_entry *entry)
+void CQueue_AddEntry(struct c_queue *queue, struct QUEUE_ENTRY *entry)
 {
     unsigned long flags = 0;
     struct c985_poc *poc = NULL;
@@ -224,3 +229,142 @@ void CQueue_FlushQueue(struct c_queue *queue)
         mutex_unlock((struct mutex *)queue->m_Object.m_semCriticalSection);
         }
 }
+
+struct QUEUE_ENTRY_CPP *CDataQueue_GetEntryByBufDesc(struct c_data_queue *queue,
+                                                     struct _QP_BUFFER_DESCRIPTOR *buf_desc)
+{
+    u8 irql;
+    struct QUEUE_ENTRY_CPP *cur;
+    struct QUEUE_ENTRY_CPP *prev = NULL;
+
+    if ((*(u32 *)((char *)queue + 0x18) & 1) == 0) {
+        if ((*(u32 *)((char *)queue + 0x18) & 2) != 0) {
+            KeWaitForSingleObject((char *)queue + 0x38, 0, 0, 0, 0);
+        }
+    }
+    else {
+        irql = KeAcquireSpinLockRaiseToDpc((char *)queue + 0x28);
+        *(u8 *)((char *)queue + 0x30) = irql;
+    }
+
+    cur = *(struct QUEUE_ENTRY_CPP **)((char *)queue + 0x70);
+    prev = NULL;
+
+    do {
+        if (cur == NULL) {
+            if ((*(u32 *)((char *)queue + 0x18) & 1) == 0) {
+                if ((*(u32 *)((char *)queue + 0x18) & 2) != 0) {
+                    KeReleaseMutex((char *)queue + 0x38, 0);
+                }
+            }
+            else {
+                KeReleaseSpinLock((char *)queue + 0x28, *(u8 *)((char *)queue + 0x30));
+            }
+            return cur;
+        }
+
+        if (cur->Data->pBufDesc == buf_desc) {
+            if (prev == NULL) {
+                *(struct QUEUE_ENTRY_CPP **)((char *)queue + 0x70) = cur->pNext;
+
+                if (*(u64 *)((char *)queue + 0x70) == 0) {
+                    *(u64 *)((char *)queue + 0x78) = *(u64 *)((char *)queue + 0x70);
+                }
+            }
+            else {
+                prev->pNext = cur->pNext;
+
+                if (cur->pNext == NULL) {
+                    *(struct QUEUE_ENTRY_CPP **)((char *)queue + 0x78) = prev;
+                }
+            }
+
+            *(int *)((char *)queue + 0x80) = *(int *)((char *)queue + 0x80) - 1;
+
+            if ((*(u32 *)((char *)queue + 0x18) & 1) == 0) {
+                if ((*(u32 *)((char *)queue + 0x18) & 2) != 0) {
+                    KeReleaseMutex((char *)queue + 0x38, 0);
+                }
+            }
+            else {
+                KeReleaseSpinLock((char *)queue + 0x28, *(u8 *)((char *)queue + 0x30));
+            }
+            return NULL;
+        }
+
+        prev = cur;
+        cur = cur->pNext;
+    } while (1);
+}
+EXPORT_SYMBOL_GPL(CDataQueue_GetEntryByBufDesc);
+struct CppObject *CppObject_CppObject(struct CppObject *this,
+                                      struct CppObject *parent,
+                                      u32 who_am_i,
+                                      u32 object_attributes)
+{
+    if (!this)
+        return NULL;
+
+    this->_padding_ = 0;
+    this->m_pParent = parent;
+    this->m_fInitialized = 0;
+    this->m_dwWhoAmI = who_am_i;
+    this->m_dwObjectAttributes = object_attributes;
+
+    if ((this->m_dwObjectAttributes & 1) != 0) {
+        spin_lock_init(&this->m_spinlock);
+    } else if ((this->m_dwObjectAttributes & 2) != 0) {
+        mutex_init(&this->m_mutex);
+    }
+
+    return this;
+}
+EXPORT_SYMBOL_GPL(CppObject_CppObject);
+
+void ResetQueue(void *queue)
+{
+    struct c_queue *q = (struct c_queue *)queue;
+
+    if (!q)
+        return;
+
+    q->m_Queue.pHead = NULL;
+    q->m_Queue.pTail = NULL;
+    q->m_dwNbInQueue = 0;
+}
+EXPORT_SYMBOL_GPL(ResetQueue);
+
+struct c_queue *CppQueue_CppQueue(struct c_queue *this,
+                                  struct CppObject *parent,
+                                  u32 who_am_i,
+                                  u32 object_attributes,
+                                  _EQPErrors (*error_handler)(void *))
+{
+    if (!this)
+        return NULL;
+
+    CppObject_CppObject((struct CppObject *)this, parent, who_am_i, object_attributes);
+
+    this->m_dwNbInQueue = 0;
+    this->m_pErrorHandler = error_handler;
+
+    ResetQueue(this);
+
+    return this;
+}
+EXPORT_SYMBOL_GPL(CppQueue_CppQueue);
+
+struct c_data_queue *CDataQueue_CDataQueue(struct c_data_queue *this,
+                                           struct CppObject *parent,
+                                           u32 who_am_i,
+                                           u32 object_attributes,
+                                           _EQPErrors (*error_handler)(void *))
+{
+    if (!this)
+        return NULL;
+
+    CppQueue_CppQueue(&this->base, parent, who_am_i, object_attributes, error_handler);
+
+    return this;
+}
+EXPORT_SYMBOL_GPL(CDataQueue_CDataQueue);

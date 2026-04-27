@@ -5,6 +5,7 @@
 #include "avermedia_c985.h"
 #include "structs.h"
 #include "qperrors.h"
+#include "include/abi/qp_buffer_descriptor.h"
 
 
 /* ============================================
@@ -134,32 +135,32 @@ int CQLCodecLib_CreateInitUSB(struct cql_codec_lib *param_1, u32 p0, u32 p1, u32
  * Public API - Peripheral constructors
  * ============================================ */
 
-struct c_tuner *CTuner_Constructor(struct c_tuner *param_1, struct c_object *param_2, int param_3);
-struct c_tvaudio *CTVAudio_Constructor(struct c_tvaudio *param_1, struct c_object *param_2, int param_3);
+struct c_tuner *CTuner_Constructor(struct c_tuner *param_1, struct CObject *param_2, int param_3);
+struct c_tvaudio *CTVAudio_Constructor(struct c_tvaudio *param_1, struct CObject *param_2, int param_3);
 struct c_video_encoder *CVideoEncoder_Constructor(struct c_video_encoder *param_1,
-                                                  struct c_object *param_2, int param_3);
+                                                  struct CObject *param_2, int param_3);
 struct c_audio_codec *CAudioCodec_Constructor(struct c_audio_codec *param_1,
-                                              struct c_object *param_2, int param_3,
+                                              struct CObject *param_2, int param_3,
                                               void *param_4, void *param_5);
 
 /* Video encoder constructors */
-struct c_saa7128 *CSaa7128_Constructor(struct c_saa7128 *param_1, struct c_object *param_2,
+struct c_saa7128 *CSaa7128_Constructor(struct c_saa7128 *param_1, struct CObject *param_2,
                                        int param_3, void *param_4, char param_5);
-struct c_adi7393 *CADI7393_Constructor(struct c_adi7393 *param_1, struct c_object *param_2,
+struct c_adi7393 *CADI7393_Constructor(struct c_adi7393 *param_1, struct CObject *param_2,
                                        int param_3, void *param_4, char param_5);
-struct c_sil9030 *CSIL9030_Constructor(struct c_sil9030 *param_1, struct c_object *param_2,
+struct c_sil9030 *CSIL9030_Constructor(struct c_sil9030 *param_1, struct CObject *param_2,
                                        int param_3, void *param_4, char param_5);
-struct c_sil9034 *CSIL9034_Constructor(struct c_sil9034 *param_1, struct c_object *param_2,
+struct c_sil9034 *CSIL9034_Constructor(struct c_sil9034 *param_1, struct CObject *param_2,
                                        int param_3, void *param_4, char param_5);
-struct c_adi9889 *CADI9889_Constructor(struct c_adi9889 *param_1, struct c_object *param_2,
+struct c_adi9889 *CADI9889_Constructor(struct c_adi9889 *param_1, struct CObject *param_2,
                                        int param_3, void *param_4, char param_5);
 
 /* Audio codec constructors */
-struct c_fm31 *CFM31_Constructor(struct c_fm31 *param_1, struct c_object *param_2,
+struct c_fm31 *CFM31_Constructor(struct c_fm31 *param_1, struct CObject *param_2,
                                  int param_3, void *param_4, void *param_5,
                                  void *param_6, char param_7);
 
-struct c985_poc *CQLCodec_Constructor(struct c985_poc *d, struct c_object *param_2,
+struct c985_poc *CQLCodec_Constructor(struct c985_poc *d, struct CObject *param_2,
                                       u32 param_3, void *param_4, void *param_5);
 
 /* CQLCodec interface function stubs - change all to c985_poc */
@@ -171,12 +172,12 @@ int CQLCodec_Get(struct c985_poc *param_1, u32 param_2, void *param_3);
 int CQLCodec_AllocEncodeTask(struct c985_poc *param_1, u32 *param_2);
 int CQLCodec_AllocDecodeTask(struct c985_poc *param_1, u32 *param_2);
 int CQLCodec_ReleaseTask(struct c985_poc *param_1, u32 param_2);
-_EQPErrors CQLCodec_Open(struct i_mpeg_codec *param_1, u32 param_2, u32 param_3,
+_EQPErrors CQLCodec_Open(struct IMpegCodec *param_1, u32 param_2, u32 param_3,
                   void *param_4, u32 *param_5,
                   void *param_6, void *param_7);
-_EQPErrors CQLCodec_Close(struct i_mpeg_codec *iface, u32 handle);
+_EQPErrors CQLCodec_Close(struct IMpegCodec *iface, u32 handle);
 int CQLCodec_Start(struct c985_poc *param_1, u32 param_2);
-int CQLCodec_Stop(struct i_mpeg_codec *param_1, u32 param_2);
+_EQPErrors CQLCodec_Stop(struct IMpegCodec *this, u32 hStream);
 int CQLCodec_Acquire(struct c985_poc *param_1, u32 param_2);
 int CQLCodec_Pause(struct c985_poc *param_1, u32 param_2);
 int CQLCodec_Step(struct c985_poc *param_1, u32 param_2);
@@ -186,8 +187,8 @@ int CQLCodec_BeginFlush(struct c985_poc *param_1, u32 param_2);
 int CQLCodec_Flush(struct c985_poc *param_1, u32 param_2);
 int CQLCodec_EndFlush(struct c985_poc *param_1, u32 param_2);
 
-int CQLCodec_AddBuffer(struct c985_poc *param_1, u32 param_2,
-                       struct qp_buffer_descriptor *param_3);
+int CQLCodec_AddBuffer(struct IMpegCodec *param_1, u32 param_2,
+                       struct _QP_BUFFER_DESCRIPTOR *param_3);
 
 int CQLCodec_CancelBuffer(struct c985_poc *param_1, u32 param_2);
 int CQLCodec_TimeoutBuffer(struct c985_poc *param_1, u32 param_2);
@@ -197,7 +198,7 @@ int CQLCodec_XferData(struct c985_poc *param_1, u32 param_2, void *param_3, u32 
 /* CQLCodec destructor */
 void CQLCodec_Destructor(struct c985_poc *param_1);
 
-struct c_i2c *CI2C_Constructor(struct c_i2c *param_1, struct c_object *param_2, int param_3,
+struct c_i2c *CI2C_Constructor(struct c_i2c *param_1, struct CObject *param_2, int param_3,
                                enum qpi2c_type param_4, u32 param_5, u32 param_6,
                                void *param_7, struct c985_poc *param_8);  /* Changed */
 int CQLCodec_ReleaseTask(struct c985_poc *param_1, u32 param_2);
