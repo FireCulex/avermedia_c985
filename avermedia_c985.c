@@ -181,6 +181,7 @@ static int CDEVICE__Init(struct pci_dev *pdev, const struct pci_device_id *id)
     dev_info(&pdev->dev, "sizeof(struct c_queue) = %zu (expected 0x50 = %zu)\n", sizeof(struct c_queue), (size_t)0x50);
     dev_info(&pdev->dev, "sizeof(struct IMpegCodec) = %zu (expected 0xC8 = %zu)\n", sizeof(struct IMpegCodec), (size_t)0xC8);
     dev_info(&pdev->dev, "sizeof(struct c_channel) = %zu (expected 0x1190 = %zu)\n", sizeof(struct c_channel), (size_t)0x1190);
+    pr_info("C985: sizeof(struct c985_poc) = %zu\n", sizeof(struct c985_poc));
 
 
 

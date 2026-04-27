@@ -104,6 +104,14 @@ u32 CObjectMgr_AddObject(struct CObject *mgr, void *obj)
 static u32 h = 0x1000; return h++;
     /* TODO: implement from Ghidra if needed */
 }
+
+u32 CppObjectMgr_AddObject(struct CObjectMgr *this, struct c_base_pin *param_1)
+{
+    static u32 h = 0x1000; return h++;
+    /* TODO: implement from Ghidra if needed */
+}
+
+
 void *CObjectMgr_RemoveObject(struct CObjectMgr *mgr, u32 handle)
 {
     struct CObjectEntry *entry;
@@ -154,11 +162,11 @@ void *CObjectMgr_RemoveObject(struct CObjectMgr *mgr, u32 handle)
     return object;
 }
 
-u32 CppObject_WhoAmI(struct CObject *this)
+u32 CppObject_WhoAmI(struct CppObject *this)
 {
-    /* TODO: m_dwWhoAmI not yet defined in struct */
-    return 0;
-    // return this->m_dwWhoAmI;
+    if (!this)
+        return 0;
+    return this->m_dwWhoAmI;
 }
 
 int CObject_IsInitialized(struct CObject *obj)
@@ -174,14 +182,11 @@ void CppObject_enterCritical(struct CppObject *this)
         return;
 
     if ((this->m_dwObjectAttributes & 1) != 0) {
-        /* Use spinlock */
-        this->m_irql = KeAcquireSpinLockRaiseToDpc(&this->m_spinlock);
+        spin_lock_irq(&this->m_spinlock);
     } else if ((this->m_dwObjectAttributes & 2) != 0) {
-        /* Use mutex */
-        KeWaitForSingleObject(&this->m_mutex, 0, 0, 0, 0);
+        mutex_lock(&this->m_mutex);
     }
 }
-EXPORT_SYMBOL_GPL(CppObject_enterCritical);
 
 void CppObject_leaveCritical(struct CppObject *this)
 {
@@ -189,11 +194,9 @@ void CppObject_leaveCritical(struct CppObject *this)
         return;
 
     if ((this->m_dwObjectAttributes & 1) != 0) {
-        /* Release spinlock */
-        KeReleaseSpinLock(&this->m_spinlock, this->m_irql);
+        spin_unlock_irq(&this->m_spinlock);
     } else if ((this->m_dwObjectAttributes & 2) != 0) {
-        /* Release mutex */
-        KeReleaseMutex(&this->m_mutex, 0);
+        mutex_unlock(&this->m_mutex);
     }
 }
 
@@ -204,13 +207,14 @@ void *CObjectMgr_GetObjectByHandle(struct CObjectMgr *this, u32 handle)
     void *result = NULL;
     struct CObjectEntry *entry;
     u32 i;
+    unsigned long flags = 0;
 
     if (!this)
         return NULL;
 
     /* Enter critical section */
     if ((this->m_Object.m_dwObjectAttributes & 1) != 0) {
-        this->m_Object.m_irql = KeAcquireSpinLockRaiseToDpc(&this->m_Object.m_spinlock);
+        spin_lock_irqsave(&this->m_Object.m_spinlock, flags);
     } else if ((this->m_Object.m_dwObjectAttributes & 2) != 0) {
         if (this->m_Object.m_semCriticalSection)
             QPOSMWaitSem(this->m_Object.m_semCriticalSection, -1);
@@ -219,15 +223,20 @@ void *CObjectMgr_GetObjectByHandle(struct CObjectMgr *this, u32 handle)
     /* Walk the linked list looking for matching handle */
     entry = this->m_pHead;
     for (i = 0; i < this->m_dwObjectNb; i++) {
+        if (!entry)
+            break;
+
         if (entry->hObject == handle) {
             result = entry->pObject;
+            break;
         }
+
         entry = entry->pNext;
     }
 
     /* Leave critical section */
     if ((this->m_Object.m_dwObjectAttributes & 1) != 0) {
-        KeReleaseSpinLock(&this->m_Object.m_spinlock, this->m_Object.m_irql);
+        spin_unlock_irqrestore(&this->m_Object.m_spinlock, flags);
     } else if ((this->m_Object.m_dwObjectAttributes & 2) != 0) {
         if (this->m_Object.m_semCriticalSection)
             QPOSMSignalSem(this->m_Object.m_semCriticalSection);

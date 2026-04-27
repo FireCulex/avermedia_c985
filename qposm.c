@@ -52,7 +52,7 @@ void QPOSMCreateEvtgrp(struct t_event_block *evt)
     spin_lock_init((spinlock_t *)&evt->spinlock);
 
     for (i = 0; i < 32; i++) {
-        init_completion(&evt->events[i]);
+        init_completion(&evt->events[i].completion);
     }
 }
 
@@ -86,7 +86,7 @@ int QPOSMSetEvtgrp(void *evtgrp, u32 mask)
     for (i = 0; i < 32; i++) {
         if ((mask & (1 << i)) && !(evt->bits & (1 << i))) {
             evt->bits |= (1 << i);
-            complete(&evt->events[i]);
+            complete(&evt->events[i].completion);
         }
     }
 
@@ -127,7 +127,7 @@ int QPOSMClearEvtgrp(void *evtgrp, u32 mask)
 
     for (i = 0; i < 32; i++) {
         if (mask & (1 << i)) {
-            reinit_completion(&evt->events[i]);
+            reinit_completion(&evt->events[i].completion);
         }
     }
 
@@ -158,7 +158,7 @@ int QPOSMWaitEvtgrp(void *evtgrp, u32 mask, u32 *out_events, long timeout_ms)
 
     for (i = 0; i < 32; i++) {
         if (mask & (1 << i)) {
-            wait_array[wait_count++] = &evt->events[i];
+            wait_array[wait_count++] = &evt->events[i].completion;
         }
     }
 

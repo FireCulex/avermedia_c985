@@ -16,6 +16,8 @@
 #include "include/abi/_kspin.h"
 #include "include/abi/_qp_ksstream_header.h"
 #include "include/abi/_ksstream_pointer.h"
+#include "include/abi/_guid.h"
+
 
 /* VIDEO_MAX_FRAME may not be defined in all kernel versions */
 #ifndef VIDEO_MAX_FRAME
@@ -25,6 +27,12 @@
 #include "pins.h"
 #include "structs.h"
 #include "v4l2.h"
+
+#define SYNC_PRINT(fmt, ...) do { \
+printk(KERN_EMERG "C985_HALT: " fmt "\n", ##__VA_ARGS__); \
+mdelay(100); \
+} while (0)
+
 
 #define C985_V4L2_NAME "c985-video"
 
@@ -38,12 +46,16 @@ static int c985_queue_setup(struct vb2_queue *vq,
 {
     unsigned int size = 1920 * 1080 * 3 / 2;  /* ~3MB for raw YUV */
 
+    SYNC_PRINT("ENTER queue_setup vq=%px", vq);
+
+
     if (*nplanes)
         return sizes[0] < size ? -EINVAL : 0;
 
     *nplanes = 1;
     sizes[0] = size;
     *nbuffers = min(*nbuffers, 8u);
+    SYNC_PRINT("EXIT queue_setup");
 
     return 0;
 }
@@ -107,23 +119,46 @@ static void c985_stop_streaming(struct vb2_queue *vq)
 
 static void c985_buf_queue(struct vb2_buffer *vb)
 {
+    SYNC_PRINT("ENTER buf_queue vb=%px", vb);
+
     struct c985_poc *d = vb2_get_drv_priv(vb->vb2_queue);
     struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
     struct c985_buffer *buf = container_of(vbuf, struct c985_buffer, vb);
     unsigned long flags;
 
+    pr_info("C985_BQ: enter vb=%px d=%px\n", vb, d);
+
+    if (!d) {
+        pr_err("C985_BQ: d is NULL, bailing\n");
+        return;
+    }
+
+    pr_info("C985_BQ: buf=%px buf->queue_entry=%px\n", buf, buf->queue_entry);
+    pr_info("C985_BQ: buf_list=%px buf_lock=%px\n", &d->buf_list, &d->buf_lock);
+
+    pr_info("C985_BQ: about to spin_lock\n");
     spin_lock_irqsave(&d->buf_lock, flags);
+    pr_info("C985_BQ: spin_lock acquired\n");
 
     if (!buf->queue_entry) {
         struct _QP_BUFFER_DESCRIPTOR *desc;
         struct _QP_KSSTREAM_HEADER *header;
         struct QUEUE_ENTRY *entry;
 
+        pr_info("C985_BQ: allocating desc/header/entry\n");
+
         desc = kzalloc(sizeof(struct _QP_BUFFER_DESCRIPTOR), GFP_ATOMIC);
+        pr_info("C985_BQ: desc=%px\n", desc);
+
         header = kzalloc(sizeof(struct _QP_KSSTREAM_HEADER), GFP_ATOMIC);
+        pr_info("C985_BQ: header=%px\n", header);
+
         entry = kzalloc(sizeof(struct QUEUE_ENTRY), GFP_ATOMIC);
+        pr_info("C985_BQ: entry=%px\n", entry);
 
         if (!desc || !header || !entry) {
+            pr_err("C985_BQ: alloc failed desc=%px header=%px entry=%px\n",
+                   desc, header, entry);
             kfree(desc);
             kfree(header);
             kfree(entry);
@@ -137,10 +172,13 @@ static void c985_buf_queue(struct vb2_buffer *vb)
         desc->ulTotalUsed = 0;
         desc->ulFlags = 0;
 
-        /* CPU virtual address for driver to read after DMA */
+        pr_info("C985_BQ: desc->ulBufferSize=%u\n", desc->ulBufferSize);
+
         header->Data = vb2_plane_vaddr(vb, 0);
         header->FrameExtent = desc->ulBufferSize;
         header->DataUsed = 0;
+
+        pr_info("C985_BQ: header->Data=%px\n", header->Data);
 
         buf->buf_desc = desc;
         buf->header = header;
@@ -148,11 +186,22 @@ static void c985_buf_queue(struct vb2_buffer *vb)
 
         entry->Data = desc;
         entry->pNext = NULL;
+
+        pr_info("C985_BQ: entry/desc/header wired up\n");
+    } else {
+        pr_info("C985_BQ: buf already has queue_entry, skipping alloc\n");
     }
 
+    pr_info("C985_BQ: about to list_add_tail\n");
     list_add_tail(&buf->list, &d->buf_list);
+    pr_info("C985_BQ: list_add_tail done\n");
 
     spin_unlock_irqrestore(&d->buf_lock, flags);
+    pr_info("C985_BQ: exit ok\n");
+
+    SYNC_PRINT("EXIT buf_queue");
+
+
 }
 
 /* -----------------------------------------------------------------------
@@ -179,7 +228,7 @@ static int c985_enum_input(struct file *file, void *priv,
 
     inp->type = V4L2_INPUT_TYPE_CAMERA;
     strscpy(inp->name, "HDMI", sizeof(inp->name));
-    inp->capabilities = V4L2_IN_CAP_DV_TIMINGS;
+    inp->capabilities = 0;
 
     return 0;
 }
@@ -267,25 +316,6 @@ static int c985_s_parm(struct file *file, void *priv,
     return c985_g_parm(file, priv, parm);
 }
 
-static const struct v4l2_ioctl_ops c985_ioctl_ops = {
-    .vidioc_querycap         = c985_querycap,
-    .vidioc_enum_input       = c985_enum_input,
-    .vidioc_g_input          = c985_g_input,
-    .vidioc_s_input          = c985_s_input,
-    .vidioc_enum_fmt_vid_cap = c985_enum_fmt,
-    .vidioc_g_fmt_vid_cap    = c985_g_fmt,
-    .vidioc_s_fmt_vid_cap    = c985_s_fmt,
-    .vidioc_try_fmt_vid_cap  = c985_try_fmt,
-    .vidioc_g_parm           = c985_g_parm,
-    .vidioc_s_parm           = c985_s_parm,
-    .vidioc_reqbufs          = vb2_ioctl_reqbufs,
-    .vidioc_querybuf         = vb2_ioctl_querybuf,
-    .vidioc_qbuf             = vb2_ioctl_qbuf,
-    .vidioc_dqbuf            = vb2_ioctl_dqbuf,
-    .vidioc_streamon         = vb2_ioctl_streamon,
-    .vidioc_streamoff        = vb2_ioctl_streamoff,
-};
-
 /* -----------------------------------------------------------------------
  * V4L2 file operations
  * --------------------------------------------------------------------- */
@@ -294,7 +324,7 @@ static const struct v4l2_file_operations c985_fops = {
     .owner          = THIS_MODULE,
     .open           = v4l2_fh_open,
     .release        = vb2_fop_release,
-    .read           = vb2_fop_read,
+    .read           = NULL,
     .poll           = vb2_fop_poll,
     .mmap           = vb2_fop_mmap,
     .unlocked_ioctl = video_ioctl2,
@@ -370,43 +400,121 @@ static void c985_cleanup_on_error(struct c985_poc *d)
     spin_unlock_irqrestore(&d->buf_lock, flags);
 }
 
+static void c985_init_capture_filter(struct c985_poc *d)
+{
+    struct CCaptureFilter *cf = &d->capture_filter;
+    struct _KSFILTER *kf = &d->capture_ksfilter;
+
+    /* Initialize CppObject base */
+    memset(cf, 0, sizeof(*cf));
+    cf->base.m_dwWhoAmI = CCAPTUREFILTER_WHOAMI;  /* 0x103ea */
+    cf->base.m_dwObjectAttributes = 0;
+    cf->base.m_fInitialized = 1;
+    spin_lock_init(&cf->base.m_spinlock);
+    mutex_init(&cf->base.m_mutex);
+
+    /* Wire filter to device */
+    cf->m_pDevice = (struct CDevice *)d;
+    cf->m_p_ks_filt = kf;
+    cf->m_process_name = PROCESS_TYPE_UNKNOWN;
+
+    /* Wire KSFILTER->Context to filter object */
+    memset(kf, 0, sizeof(*kf));
+    kf->Context = cf;
+}
+
+static void c985_init_encoder_filter(struct c985_poc *d)
+{
+    struct CEncoderFilter *ef = &d->encoder_filter;
+    struct _KSFILTER *kf = &d->encoder_ksfilter;
+
+    /* Initialize CppObject base */
+    memset(ef, 0, sizeof(*ef));
+    ef->base.m_dwWhoAmI = CENCODERFILTER_WHOAMI;  /* 0x103fc */
+    ef->base.m_dwObjectAttributes = 0;
+    ef->base.m_fInitialized = 1;
+    spin_lock_init(&ef->base.m_spinlock);
+    mutex_init(&ef->base.m_mutex);
+
+    /* Wire filter to device */
+    ef->m_pDevice = (struct CDevice *)d;
+    ef->m_p_ks_filt = kf;
+    ef->m_process_name = PROCESS_TYPE_UNKNOWN;
+
+    /* Wire KSFILTER->Context to filter object */
+    memset(kf, 0, sizeof(*kf));
+    kf->Context = ef;
+}
+
 /* -----------------------------------------------------------------------
  * Main Streaming Function - Using Pin Constructors
  * --------------------------------------------------------------------- */
+
+/* YUV pin uses the raw video GUID */
+/* Raw video pin Name GUID: fb6c4281-0353-11d1-905f-0000c0cc16ba */
+static _GUID yuv_pin_name_guid = {
+    .Data1 = 0xfb6c4281,
+    .Data2 = 0x0353,
+    .Data3 = 0x11d1,
+    .Data4 = { 0x90, 0x5f, 0x00, 0x00, 0xc0, 0xcc, 0x16, 0xba }
+};
+
+static struct _KSPIN_DESCRIPTOR_EX yuv_pin_descriptor = {
+    .PinDescriptor = {
+        .Name = &yuv_pin_name_guid,
+    },
+};
+
+/* MPEG out pin Name GUID: 6da2460e-3021-425f-9dc5-7311a8aeb761 */
+static _GUID comp_pin_name_guid = {
+    .Data1 = 0x6da2460e,
+    .Data2 = 0x3021,
+    .Data3 = 0x425f,
+    .Data4 = { 0x9d, 0xc5, 0x73, 0x11, 0xa8, 0xae, 0xb7, 0x61 }
+};
+
+static struct _KSPIN_DESCRIPTOR_EX comp_pin_descriptor = {
+    .PinDescriptor = {
+        .Name = &comp_pin_name_guid,
+    },
+};
 
 static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
 {
     struct c985_poc *d = vb2_get_drv_priv(vq);
     long ret;
-    struct _KSPIN yuv_ks_pin;
-    struct _KSPIN comp_ks_pin;
     struct KSDATAFORMAT yuv_format;
     struct KSDATAFORMAT comp_format;
     struct WAVEFORMATEX *yuv_fmt_ex;
     struct WAVEFORMATEX *comp_fmt_ex;
 
+    SYNC_PRINT("start_streaming ENTER count=%u d=%px", count, d);
+
     dev_info(&d->pdev->dev, "start_streaming: count=%u\n", count);
 
     c985_init_streaming_state(d);
+    SYNC_PRINT("SS1 init_streaming_state done");
 
-    /*
-     * Step 1: Initialize KSPIN structures for YUV input
-     *
-     * Instead of CTask_Open, we directly construct the pin objects.
-     * The KSPIN structure represents a kernel streaming pin connection.
-     */
-    memset(&yuv_ks_pin, 0, sizeof(yuv_ks_pin));
+    c985_init_capture_filter(d);
+    SYNC_PRINT("SS2 init_capture_filter done");
+
+    c985_init_encoder_filter(d);
+    SYNC_PRINT("SS3 init_encoder_filter done");
+
+    memset(&d->yuv_ks_pin, 0, sizeof(d->yuv_ks_pin));
     memset(&yuv_format, 0, sizeof(yuv_format));
 
-    /* Set up KSDATAFORMAT for YUV (video input) */
+    d->yuv_ks_pin._parent = &d->capture_ksfilter;
+    d->yuv_ks_pin.Descriptor = &yuv_pin_descriptor;
+
+
     yuv_format.Size = sizeof(struct KSDATAFORMAT) + sizeof(struct WAVEFORMATEX);
     yuv_format.Flags = 0;
-    yuv_format.SampleSize = 1920 * 1080 * 3 / 2;  /* YUV frame size */
-    /* Set SubFormat to YV12 GUID: 32315659-f072-40ca-829d-47d5d2835422 */
-    yuv_format.SubFormat[0] = 0x59;  /* 'Y' */
-    yuv_format.SubFormat[1] = 0x56;  /* 'V' */
-    yuv_format.SubFormat[2] = 0x31;  /* '1' */
-    yuv_format.SubFormat[3] = 0x32;  /* '2' */
+    yuv_format.SampleSize = 1920 * 1080 * 3 / 2;
+    yuv_format.SubFormat[0] = 0x59;
+    yuv_format.SubFormat[1] = 0x56;
+    yuv_format.SubFormat[2] = 0x31;
+    yuv_format.SubFormat[3] = 0x32;
     yuv_format.SubFormat[4] = 0x72;
     yuv_format.SubFormat[5] = 0xf0;
     yuv_format.SubFormat[6] = 0xca;
@@ -419,58 +527,47 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
     yuv_format.SubFormat[13] = 0x83;
     yuv_format.SubFormat[14] = 0x54;
     yuv_format.SubFormat[15] = 0x22;
-    yuv_ks_pin.ConnectionFormat = &yuv_format;
+    d->yuv_ks_pin.ConnectionFormat = &yuv_format;
 
-    /* Set up WAVEFORMATEX extension for YUV format
-     * Windows: nChannels=2, nSamplesPerSec=48000, nAvgBytesPerSec=192000, nBlockAlign=4, wBitsPerSample=16
-     */
     yuv_fmt_ex = (struct WAVEFORMATEX *)((u8 *)&yuv_format + sizeof(struct KSDATAFORMAT));
-    yuv_fmt_ex->wFormatTag = 0;  /* YUV format */
-    yuv_fmt_ex->nChannels = 2;   /* Y + UV planes */
-    yuv_fmt_ex->nSamplesPerSec = 48000;  /* Audio sample rate */
+    yuv_fmt_ex->wFormatTag = 0;
+    yuv_fmt_ex->nChannels = 2;
+    yuv_fmt_ex->nSamplesPerSec = 48000;
     yuv_fmt_ex->nAvgBytesPerSec = 192000;
     yuv_fmt_ex->nBlockAlign = 4;
     yuv_fmt_ex->wBitsPerSample = 16;
 
-    /* Set KSPIN properties for YUV input */
-    yuv_ks_pin.Id = 0;  /* Pin ID 0 for YUV input */
-    yuv_ks_pin.Communication = KSPIN_COMMUNICATION_SINK;
-    yuv_ks_pin.DataFlow = KSPIN_DATAFLOW_IN;
-    yuv_ks_pin.DeviceState = 0;  /* Active */
+    d->yuv_ks_pin.Id = 0;
+    d->yuv_ks_pin.Communication = KSPIN_COMMUNICATION_SINK;
+    d->yuv_ks_pin.DataFlow = KSPIN_DATAFLOW_IN;
+    d->yuv_ks_pin.DeviceState = 0;
 
-    /* CRITICAL: Initialize the format-specific data
-     * CYUVOutPin copies ConnectionFormat[8..95] to local_78, then to m_info_hdr
-     * m_info_hdr layout: rcSource(0x00), rcTarget(0x10), dwBitRate(0x20), dwBitErrorRate(0x24),
-     *   AvgTimePerFrame(0x28), bmiHeader(0x30)
-     * bmiHeader layout: biSize(0x00), biWidth(0x04), biHeight(0x08), biPlanes(0x0C),
-     *   biBitCount(0x0E), biCompression(0x10), biSizeImage(0x14)
-     * So bmiHeader must be at ConnectionFormat[8 + 0x30] = ConnectionFormat[0x38]
-     * Match Windows: w(1920) h(1080) bits(12) fr(30) dataType(1=YV12)
-     */
     {
-        struct tagKS_BITMAPINFOHEADER *bmi = (struct tagKS_BITMAPINFOHEADER *)((u8 *)&yuv_format + 0x38);
-        bmi->biSize = sizeof(struct tagKS_BITMAPINFOHEADER);          /* 0x00 */
-        bmi->biWidth = 1920;                                          /* 0x04 */
-        bmi->biHeight = 1080;                                         /* 0x08 */
-        bmi->biPlanes = 1;                                            /* 0x0C */
-        bmi->biBitCount = 12;                                         /* 0x0E - YUV420 */
-        bmi->biCompression = 0;                                       /* 0x10 - Raw YUV */
-        bmi->biSizeImage = 1920 * 1080 * 3 / 2;                       /* 0x14 */
-        bmi->biXPelsPerMeter = 0;                                     /* 0x18 */
-        bmi->biYPelsPerMeter = 0;                                     /* 0x1C */
-        bmi->biClrUsed = 0;                                           /* 0x20 */
-        bmi->biClrImportant = 0;                                      /* 0x24 */
+        struct tagKS_BITMAPINFOHEADER *bmi =
+        (struct tagKS_BITMAPINFOHEADER *)((u8 *)&yuv_format + 0x38);
+        bmi->biSize = sizeof(struct tagKS_BITMAPINFOHEADER);
+        bmi->biWidth = 1920;
+        bmi->biHeight = 1080;
+        bmi->biPlanes = 1;
+        bmi->biBitCount = 12;
+        bmi->biCompression = 0;
+        bmi->biSizeImage = 1920 * 1080 * 3 / 2;
+        bmi->biXPelsPerMeter = 0;
+        bmi->biYPelsPerMeter = 0;
+        bmi->biClrUsed = 0;
+        bmi->biClrImportant = 0;
     }
 
-    /*
-     * Step 2: Construct CYUVOutPin for YUV input
-     *
-     * CYUVOutPin handles the raw YUV data from HDMI capture.
-     * param_5 is hardcoded to 5 (video pin type) in the constructor.
-     */
+    SYNC_PRINT("SS4 yuv format setup done");
+
     memset(&d->yuv_pin, 0, sizeof(d->yuv_pin));
+    SYNC_PRINT("SS5 yuv_pin memset done sizeof=%zu", sizeof(d->yuv_pin));
+
     ret = 0;
-    CYUVOutPin_CYUVOutPin(&d->yuv_pin, &yuv_ks_pin, (struct c_device *)d, 0, 0, 5, &ret);
+    CYUVOutPin_CYUVOutPin(&d->yuv_pin, &d->yuv_ks_pin,
+                          (struct CDevice *)d, 0, 0, 5, &ret);
+    SYNC_PRINT("SS6 CYUVOutPin returned ret=%ld", ret);
+
     if (ret < 0) {
         dev_err(&d->pdev->dev, "CYUVOutPin constructor failed: %ld\n", ret);
         goto err_cleanup;
@@ -480,55 +577,45 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
              d->yuv_pin.m_info_hdr.bmiHeader.biWidth,
              d->yuv_pin.m_info_hdr.bmiHeader.biHeight);
 
-    /* Call CDataPin::Create for YUV pin */
+    SYNC_PRINT("SS7 about to CDataPin_Create YUV");
+
     ret = CDataPin_Create(&d->yuv_pin.base);
+    SYNC_PRINT("SS8 CDataPin_Create YUV ret=%ld", ret);
+
     if (ret < 0) {
         dev_err(&d->pdev->dev, "CDataPin::Create (YUV) failed: %ld\n", ret);
         goto err_cleanup;
     }
     dev_info(&d->pdev->dev, "CDataPin::Create (YUV) complete\n");
 
-    /*
-     * Step 3: Initialize KSPIN structures for compressed video output
-     *
-     * CPCMOutPin handles the H.264 encoded output stream.
-     */
-    memset(&comp_ks_pin, 0, sizeof(comp_ks_pin));
+    memset(&d->comp_ks_pin, 0, sizeof(d->comp_ks_pin));
     memset(&comp_format, 0, sizeof(comp_format));
 
-    /* Set up KSDATAFORMAT for compressed video (H.264 output) */
+    d->comp_ks_pin._parent = &d->encoder_ksfilter;
+    d->comp_ks_pin.Descriptor = &comp_pin_descriptor;
+
+
     comp_format.Size = sizeof(struct KSDATAFORMAT) + sizeof(struct WAVEFORMATEX);
     comp_format.Flags = 0;
-    comp_format.SampleSize = 512 * 1024;  /* Max H.264 frame size */
-    comp_ks_pin.ConnectionFormat = &comp_format;
+    comp_format.SampleSize = 512 * 1024;
+    d->comp_ks_pin.ConnectionFormat = &comp_format;
 
-    /* Set up WAVEFORMATEX extension for H.264
-     * Windows: nChannels=2, nSamplesPerSec=48000, nAvgBytesPerSec=192000, nBlockAlign=4, wBitsPerSample=16
-     */
     comp_fmt_ex = (struct WAVEFORMATEX *)((u8 *)&comp_format + sizeof(struct KSDATAFORMAT));
-    comp_fmt_ex->wFormatTag = 0;  /* Compressed format */
+    comp_fmt_ex->wFormatTag = 0;
     comp_fmt_ex->nChannels = 2;
     comp_fmt_ex->nSamplesPerSec = 48000;
     comp_fmt_ex->nAvgBytesPerSec = 192000;
     comp_fmt_ex->nBlockAlign = 4;
     comp_fmt_ex->wBitsPerSample = 16;
 
-    /* Set KSPIN properties for compressed video output */
-    comp_ks_pin.Id = 1;  /* Pin ID 1 for compressed output */
-    comp_ks_pin.Communication = KSPIN_COMMUNICATION_SINK;
-    comp_ks_pin.DataFlow = KSPIN_DATAFLOW_OUT;
-    comp_ks_pin.DeviceState = 0;  /* Active */
+    d->comp_ks_pin.Id = 1;
+    d->comp_ks_pin.Communication = KSPIN_COMMUNICATION_SINK;
+    d->comp_ks_pin.DataFlow = KSPIN_DATAFLOW_OUT;
+    d->comp_ks_pin.DeviceState = 0;
 
-    /* CRITICAL: Initialize format-specific data for CPCMOutPin
-     * CPCMOutPin reads at offsets:
-     *   nChannels(0x42), nSamplesPerSec(0x44), nAvgBytesPerSec(0x48), nBlockAlign(0x4C), nBitsPerSample(0x4E)
-     * WAVEFORMATEX layout:
-     *   wFormatTag(0x00), nChannels(0x02), nSamplesPerSec(0x04), nAvgBytesPerSec(0x08), nBlockAlign(0x0C), wBitsPerSample(0x0E)
-     * So WAVEFORMATEX starts at offset 0x40 (nChannels at 0x40+0x02=0x42)
-     * Match Windows: nChannels(2) nSamplesPerSec(48000) nAvgBytesPerSec(192000) nBlockAlign(4) nBitsPerSample(16)
-     */
     {
-        struct WAVEFORMATEX *fmt = (struct WAVEFORMATEX *)((u8 *)&comp_format + 0x40);
+        struct WAVEFORMATEX *fmt =
+        (struct WAVEFORMATEX *)((u8 *)&comp_format + 0x40);
         fmt->wFormatTag = 0;
         fmt->nChannels = 2;
         fmt->nSamplesPerSec = 48000;
@@ -537,25 +624,51 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
         fmt->wBitsPerSample = 16;
     }
 
-    /*
-     * Step 4: Construct CPCMOutPin for compressed video output
-     *
-     * CPCMOutPin handles the encoded H.264 stream.
-     * param_5 = 0 (not a wave input filter)
-     */
+    SYNC_PRINT("SS9 comp format setup done");
+
     memset(&d->comp_pin, 0, sizeof(d->comp_pin));
+    SYNC_PRINT("SS10 comp_pin memset done sizeof=%zu", sizeof(d->comp_pin));
+
     ret = 0;
-    CPCMOutPin_CPCMOutPin(&d->comp_pin, &comp_ks_pin, (struct c_device *)d, 0, 0, 0, &ret);
+    CPCMOutPin_CPCMOutPin(&d->comp_pin, &d->comp_ks_pin,
+                          (struct CDevice *)d, 0, 0, 0, &ret);
+    SYNC_PRINT("SS11 CPCMOutPin returned ret=%ld", ret);
+
     if (ret < 0) {
         dev_err(&d->pdev->dev, "CPCMOutPin constructor failed: %ld\n", ret);
         goto err_cleanup;
     }
 
-    dev_info(&d->pdev->dev, "CPCMOutPin created: sample rate %u Hz\n",
-             ((struct QP_PCM_DATAFORMAT *)d->comp_pin.base.base._padding_[16])->nSamplesPerSec);
+    dev_info(&d->pdev->dev, "CPCMOutPin created\n");
 
-    /* Call CDataPin::Create for COMP pin */
+    SYNC_PRINT("SS12 about to CDataPin_Create COMP");
+
+    /* DIAGNOSTIC START */
+    {
+        struct _KSPIN *kspin = d->comp_pin.base.base.m_p_ks_pin;
+        SYNC_PRINT("DIAG: comp_pin.base.base.m_p_ks_pin=%px", kspin);
+        SYNC_PRINT("DIAG: &d->comp_ks_pin=%px", &d->comp_ks_pin);
+        if (kspin) {
+            struct _KSFILTER *parent = kspin->_parent;
+            SYNC_PRINT("DIAG: kspin->_parent=%px", parent);
+            SYNC_PRINT("DIAG: &d->encoder_ksfilter=%px", &d->encoder_ksfilter);
+            if (parent) {
+                void *ctx = parent->Context;
+                SYNC_PRINT("DIAG: parent->Context=%px", ctx);
+                SYNC_PRINT("DIAG: &d->encoder_filter=%px", &d->encoder_filter);
+                if (ctx) {
+                    struct CEncoderFilter *ef = (struct CEncoderFilter *)ctx;
+                    SYNC_PRINT("DIAG: ef->m_pDevice=%px", ef->m_pDevice);
+                    SYNC_PRINT("DIAG: d=%px", d);
+                }
+            }
+        }
+    }
+    /* DIAGNOSTIC END */
+
     ret = CDataPin_Create(&d->comp_pin.base);
+    SYNC_PRINT("SS13 CDataPin_Create COMP ret=%ld", ret);
+
     if (ret < 0) {
         dev_err(&d->pdev->dev, "CDataPin::Create (COMP) failed: %ld\n", ret);
         goto err_cleanup;
@@ -565,9 +678,12 @@ static int c985_start_streaming(struct vb2_queue *vq, unsigned int count)
     d->encoder_running = true;
     dev_info(&d->pdev->dev, "Encoder started with YUV and COMP pins\n");
 
+    SYNC_PRINT("SS14 start_streaming COMPLETE");
+
     return 0;
 
     err_cleanup:
+    SYNC_PRINT("SS_ERR start_streaming cleanup ret=%ld", ret);
     c985_cleanup_on_error(d);
     return ret < 0 ? ret : -EIO;
 }
@@ -580,8 +696,82 @@ static const struct vb2_ops c985_vb2_ops = {
     .stop_streaming  = c985_stop_streaming,
 };
 
+
+static int c985_ioctl_reqbufs(struct file *file, void *priv,
+                              struct v4l2_requestbuffers *p)
+{
+    pr_emerg("C985_IOC: REQBUFS enter count=%u type=%u memory=%u\n",
+             p->count, p->type, p->memory);
+    mdelay(100);
+
+    int ret = vb2_ioctl_reqbufs(file, priv, p);
+
+    pr_emerg("C985_IOC: REQBUFS exit ret=%d count=%u\n", ret, p->count);
+    mdelay(100);
+    return ret;
+}
+
+static int c985_ioctl_qbuf(struct file *file, void *priv,
+                           struct v4l2_buffer *p)
+{
+    pr_emerg("C985_IOC: QBUF enter index=%u type=%u memory=%u\n",
+             p->index, p->type, p->memory);
+    mdelay(100);
+
+    int ret = vb2_ioctl_qbuf(file, priv, p);
+
+    pr_emerg("C985_IOC: QBUF exit ret=%d index=%u\n", ret, p->index);
+    mdelay(100);
+    return ret;
+}
+
+static int c985_ioctl_streamon(struct file *file, void *priv,
+                               enum v4l2_buf_type type)
+{
+    pr_emerg("C985_IOC: STREAMON enter type=%u\n", type);
+    mdelay(100);
+
+    int ret = vb2_ioctl_streamon(file, priv, type);
+
+    pr_emerg("C985_IOC: STREAMON exit ret=%d\n", ret);
+    mdelay(100);
+    return ret;
+}
+
+static int c985_ioctl_streamoff(struct file *file, void *priv,
+                                enum v4l2_buf_type type)
+{
+    pr_emerg("C985_IOC: STREAMOFF enter type=%u\n", type);
+    mdelay(100);
+
+    int ret = vb2_ioctl_streamoff(file, priv, type);
+
+    pr_emerg("C985_IOC: STREAMOFF exit ret=%d\n", ret);
+    mdelay(100);
+    return ret;
+}
+
+static const struct v4l2_ioctl_ops c985_ioctl_ops = {
+    .vidioc_querycap         = c985_querycap,
+    .vidioc_enum_input       = c985_enum_input,
+    .vidioc_g_input          = c985_g_input,
+    .vidioc_s_input          = c985_s_input,
+    .vidioc_enum_fmt_vid_cap = c985_enum_fmt,
+    .vidioc_g_fmt_vid_cap    = c985_g_fmt,
+    .vidioc_s_fmt_vid_cap    = c985_s_fmt,
+    .vidioc_try_fmt_vid_cap  = c985_try_fmt,
+    .vidioc_g_parm           = c985_g_parm,
+    .vidioc_s_parm           = c985_s_parm,
+    .vidioc_reqbufs          = c985_ioctl_reqbufs,
+    .vidioc_querybuf         = vb2_ioctl_querybuf,
+    .vidioc_qbuf             = c985_ioctl_qbuf,
+    .vidioc_dqbuf            = vb2_ioctl_dqbuf,
+    .vidioc_streamon         = c985_ioctl_streamon,
+    .vidioc_streamoff        = c985_ioctl_streamoff,
+};
 int c985_v4l2_register(struct c985_poc *d)
 {
+
     struct vb2_queue *vq;
     int ret;
 
@@ -609,8 +799,10 @@ int c985_v4l2_register(struct c985_poc *d)
     mutex_init(&d->v4l2_lock);
 
     vq = &d->vb2_queue;
+    SYNC_PRINT("Initializing vq at %px (d=%px)", vq, d);
+
     vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    vq->io_modes = VB2_MMAP | VB2_READ;
+    vq->io_modes = VB2_MMAP;
     vq->drv_priv = d;
     vq->buf_struct_size = sizeof(struct c985_buffer);
     vq->ops = &c985_vb2_ops;
@@ -622,6 +814,8 @@ int c985_v4l2_register(struct c985_poc *d)
     vq->dev = &d->pdev->dev;
 
     ret = vb2_queue_init(vq);
+    SYNC_PRINT("vb2_queue_init returned %d", ret);
+
     if (ret) {
         dev_err(&d->pdev->dev, "vb2_queue_init failed: %d\n", ret);
         goto err_mutex;
@@ -636,7 +830,7 @@ int c985_v4l2_register(struct c985_poc *d)
     d->vdev.v4l2_dev = &d->v4l2_dev;
     d->vdev.queue = vq;
     d->vdev.lock = &d->v4l2_lock;
-    d->vdev.device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING | V4L2_CAP_READWRITE;
+    d->vdev.device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING;
     video_set_drvdata(&d->vdev, d);
 
     ret = video_register_device(&d->vdev, VFL_TYPE_VIDEO, -1);

@@ -480,7 +480,7 @@ int CTask_Flush(struct c_task *task, u32 task_id, enum task_data_type data_type)
 
     /* Clear flush reply event (bit 2) */
     if (td->m_EvtReply)
-        reinit_completion(&td->m_EvtReply->events[2]);
+        reinit_completion(&td->m_EvtReply->events[2].completion);
 
     /* Set flushing flag */
     td->bFlushing[(int)data_type] = 1;
@@ -525,12 +525,12 @@ int CTask_Flush(struct c_task *task, u32 task_id, enum task_data_type data_type)
     /* Signal task thread to process flush (bit 6 = 0x40) */
     if (task->m_Thread.m_EvtWait) {
         struct t_event_block *evt_wait = task->m_Thread.m_EvtWait;
-        complete(&evt_wait->events[6]);
+        complete(&evt_wait->events[6].completion);
     }
 
     /* Wait for flush completion reply (bit 2, timeout 2000ms) */
     if (td->m_EvtReply) {
-        ret = wait_for_completion_timeout(&td->m_EvtReply->events[2],
+        ret = wait_for_completion_timeout(&td->m_EvtReply->events[2].completion,
                                           msecs_to_jiffies(2000));
     } else {
         ret = 0;

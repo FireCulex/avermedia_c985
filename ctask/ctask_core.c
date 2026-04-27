@@ -10,6 +10,8 @@
 #include "../include/abi/cdecoderfilter.h"
 #include "../include/abi/cencoderfilter.h"
 #include "../include/abi/qp_process_type.h"
+#include "../include/abi/cdevice.h"
+
 
 /* ================================================================
  * CTask_Constructor
@@ -200,13 +202,11 @@ ulong CTaskRawAudio_getTaskHandle(struct CTaskRawAudio *this)
 {
     return this->m_hRawAudioTask;
 }
-EXPORT_SYMBOL_GPL(CTaskRawAudio_getTaskHandle);
 
 ulong CDecoderFilter_GetTaskHandle(struct CDecoderFilter *this)
 {
     return this->m_hTask;
 }
-EXPORT_SYMBOL_GPL(CDecoderFilter_GetTaskHandle);
 
 ulong CEncoderFilter_GetEncodeTaskHandle(struct CEncoderFilter *this)
 {
@@ -224,7 +224,6 @@ ulong CEncoderFilter_GetEncodeTaskHandle(struct CEncoderFilter *this)
 
     return ret;
 }
-EXPORT_SYMBOL_GPL(CEncoderFilter_GetEncodeTaskHandle);
 
 ulong CCaptureFilter_GetRawVideoTaskHandle(struct CCaptureFilter *this)
 {
@@ -243,7 +242,6 @@ ulong CCaptureFilter_GetRawVideoTaskHandle(struct CCaptureFilter *this)
 
     return ret;
 }
-EXPORT_SYMBOL_GPL(CCaptureFilter_GetRawVideoTaskHandle);
 
 ulong CCaptureFilter_GetRawAudioTaskHandle(struct CCaptureFilter *this)
 {
@@ -263,17 +261,16 @@ ulong CCaptureFilter_GetRawAudioTaskHandle(struct CCaptureFilter *this)
 }
 
 /* If you know the struct */
-enum qp_process_type CEncoderFilter_getProcessName(struct CEncoderFilter *filter)
+enum QP_PROCESS_TYPE CEncoderFilter_getProcessName(struct CEncoderFilter *filter)
 {
     if (!filter)
         return PROCESS_TYPE_UNKNOWN;
 
     return filter->m_process_name;
 }
-EXPORT_SYMBOL_GPL(CEncoderFilter_getProcessName);
 
 /* If you know the struct */
-int CCaptureFilter_ProcessName_Setting(struct CCaptureFilter *filter, enum qp_process_type process_type)
+int CCaptureFilter_ProcessName_Setting(struct CCaptureFilter *filter, enum QP_PROCESS_TYPE process_type)
 {
     if (!filter)
         return -EINVAL;
@@ -281,8 +278,3 @@ int CCaptureFilter_ProcessName_Setting(struct CCaptureFilter *filter, enum qp_pr
     filter->m_process_name = process_type;
     return 0;
 }
-
-EXPORT_SYMBOL_GPL(CCaptureFilter_ProcessName_Setting);
-
-
-EXPORT_SYMBOL_GPL(CCaptureFilter_GetRawAudioTaskHandle);

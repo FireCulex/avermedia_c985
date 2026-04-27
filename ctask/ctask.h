@@ -16,6 +16,7 @@
 #include "../include/abi/cdecoderfilter.h"
 #include "../include/abi/qp_process_type.h"
 
+struct CTaskRawAudio;
 
 
 /* ============================================
@@ -209,8 +210,8 @@ ulong CDecoderFilter_GetTaskHandle(struct CDecoderFilter *this);
 ulong CEncoderFilter_GetEncodeTaskHandle(struct CEncoderFilter *this);
 ulong CCaptureFilter_GetRawVideoTaskHandle(struct CCaptureFilter *this);
 ulong CCaptureFilter_GetRawAudioTaskHandle(struct CCaptureFilter *this);
-enum qp_process_type CEncoderFilter_getProcessName(struct CEncoderFilter *filter);
-int CCaptureFilter_ProcessName_Setting(struct CCaptureFilter *filter, enum qp_process_type process_type);
+enum QP_PROCESS_TYPE CEncoderFilter_getProcessName(struct CEncoderFilter *filter);
+int CCaptureFilter_ProcessName_Setting(struct CCaptureFilter *filter, enum QP_PROCESS_TYPE process_type);
 
 
 #endif /* CTASK_H */

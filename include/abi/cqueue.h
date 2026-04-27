@@ -1,8 +1,22 @@
-/* include/abi/c_queue.h */
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * include/abi/cqueue.h — CQueue ABI layout (CObject-based)
+ *
+ * Used by CChannel for free/data/pending queues.
+ * Constructed via CQueue_Constructor().
+ *
+ * Verified from Ghidra CQueue struct + CQueue_Constructor decompilation:
+ *   +0x00  CObject base (0x38 bytes)
+ *   +0x38  QUEUE_LIST (pHead, pTail)
+ *   +0x48  m_dwNbInQueue
+ *   Total: 0x50
+ */
 #ifndef _C_QUEUE_H
 #define _C_QUEUE_H
 
 #include <linux/types.h>
+#include <linux/build_bug.h>
+#include <linux/stddef.h>
 #include "cobject.h"
 #include "../../qperrors.h"
 
@@ -21,14 +35,13 @@ struct c_queue {
     struct QUEUE_LIST m_Queue;                  /* 0x38 */
     u32 m_dwNbInQueue;                          /* 0x48 */
     u32 _pad4C;                                 /* 0x4C */
-    u8 _padding[0x30];                          /* 0x50 - 0x7F */
-    u32 m_dwExtra;                              /* 0x80 */
-    u32 _pad84;                                 /* 0x84 */
-    _EQPErrors (*m_pErrorHandler)(void *);      /* 0x88 */
-};                                              /* total: 0x90 */
+};                                              /* total: 0x50 */
 
-struct c_data_queue {
-    struct c_queue base;        /* 0x00 - 0x8F */
-};                              /* total: 0x90 */
+static_assert(offsetof(struct c_queue, m_Object)       == 0x00);
+static_assert(offsetof(struct c_queue, m_Queue)        == 0x38);
+static_assert(offsetof(struct c_queue, m_Queue.pHead)  == 0x38);
+static_assert(offsetof(struct c_queue, m_Queue.pTail)  == 0x40);
+static_assert(offsetof(struct c_queue, m_dwNbInQueue)  == 0x48);
+static_assert(sizeof(struct c_queue)                   == 0x50);
 
 #endif /* _C_QUEUE_H */

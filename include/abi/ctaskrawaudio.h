@@ -3,6 +3,7 @@
 #define _CTASK_RAW_AUDIO_H
 
 #include <linux/types.h>
+#include "cdevice.h"
 
 struct _HDMI_INFO {
     u16 HActive;        /* 0x00 */
@@ -24,7 +25,7 @@ struct _HDMI_INFO {
 struct CTaskRawAudio {
     int m_dwRawAudioTaskIsRunning;          /* 0x00 */
     u32 __pad04;                            /* 0x04 - alignment padding */
-    struct c_device    *m_pDevice;          /* 0x08 */
+    struct CDevice    *m_pDevice;          /* 0x08 */
     struct ICodecLib   *m_pCodec;           /* 0x10 */
     struct IMpegCodec  *m_pMpegCodec;       /* 0x18 */
     ulong m_hRawAudioTask;                  /* 0x20 */

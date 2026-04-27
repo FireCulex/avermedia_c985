@@ -16,16 +16,6 @@
 #define codec_to_poc(c) container_of(c, struct c985_poc, codec)
 
 
-void CQueue_ResetQueue(struct c_queue *queue)
-{
-    if (!queue)
-        return;
-
-    queue->m_Queue.pHead = NULL;
-    queue->m_Queue.pTail = NULL;
-    queue->m_dwNbInQueue = 0;
-}
-
 struct c_queue *CQueue_Constructor(struct c_queue *queue, struct CObject *parent, u32 attr)
 {
     if (!queue)
@@ -69,7 +59,6 @@ struct QUEUE_ENTRY *CQueue_GetOneEntry(struct c_queue *queue)
     if (queue->m_Object.m_dwObjectAttributes & 1) {
         /* Spinlock mode */
         spin_lock_irqsave((spinlock_t *)&queue->m_Object.m_spinlock, flags);
-        queue->m_Object.m_irql = (u8)flags;
     } else if ((queue->m_Object.m_dwObjectAttributes & 2) &&
         queue->m_Object.m_semCriticalSection) {
         /* Semaphore mode - use mutex in Linux */
@@ -110,7 +99,6 @@ struct QUEUE_ENTRY *CQueue_GetEntryByData(struct c_queue *queue, void *data)
     /* Lock */
     if (queue->m_Object.m_dwObjectAttributes & 1) {
         spin_lock_irqsave((spinlock_t *)&queue->m_Object.m_spinlock, flags);
-        queue->m_Object.m_irql = (u8)flags;
     } else if ((queue->m_Object.m_dwObjectAttributes & 2) &&
         queue->m_Object.m_semCriticalSection) {
         mutex_lock((struct mutex *)queue->m_Object.m_semCriticalSection);
@@ -173,7 +161,6 @@ void CQueue_AddEntry(struct c_queue *queue, struct QUEUE_ENTRY *entry)
     /* Lock */
     if (queue->m_Object.m_dwObjectAttributes & 1) {
         spin_lock_irqsave((spinlock_t *)&queue->m_Object.m_spinlock, flags);
-        queue->m_Object.m_irql = (u8)flags;
     } else if ((queue->m_Object.m_dwObjectAttributes & 2) &&
         queue->m_Object.m_semCriticalSection) {
         mutex_lock((struct mutex *)queue->m_Object.m_semCriticalSection);
@@ -208,7 +195,6 @@ void CQueue_FlushQueue(struct c_queue *queue)
     /* Lock */
     if (queue->m_Object.m_dwObjectAttributes & 1) {
         spin_lock_irqsave((spinlock_t *)&queue->m_Object.m_spinlock, flags);
-        queue->m_Object.m_irql = (u8)flags;
     } else if ((queue->m_Object.m_dwObjectAttributes & 2) &&
         queue->m_Object.m_semCriticalSection) {
         mutex_lock((struct mutex *)queue->m_Object.m_semCriticalSection);
@@ -319,36 +305,22 @@ struct CppObject *CppObject_CppObject(struct CppObject *this,
 
     return this;
 }
-EXPORT_SYMBOL_GPL(CppObject_CppObject);
 
-void ResetQueue(void *queue)
-{
-    struct c_queue *q = (struct c_queue *)queue;
-
-    if (!q)
-        return;
-
-    q->m_Queue.pHead = NULL;
-    q->m_Queue.pTail = NULL;
-    q->m_dwNbInQueue = 0;
-}
-EXPORT_SYMBOL_GPL(ResetQueue);
-
-struct c_queue *CppQueue_CppQueue(struct c_queue *this,
-                                  struct CppObject *parent,
-                                  u32 who_am_i,
-                                  u32 object_attributes,
-                                  _EQPErrors (*error_handler)(void *))
+struct cpp_queue *CppQueue_CppQueue(struct cpp_queue *this,
+                                    struct CppObject *parent,
+                                    u32 who_am_i,
+                                    u32 object_attributes,
+                                    _EQPErrors (*error_handler)(void *))
 {
     if (!this)
         return NULL;
 
-    CppObject_CppObject((struct CppObject *)this, parent, who_am_i, object_attributes);
+    CppObject_CppObject(&this->m_Object, parent, who_am_i, object_attributes);
 
     this->m_dwNbInQueue = 0;
-    this->m_pErrorHandler = error_handler;
+    this->m_pFuncCallback = error_handler;
 
-    ResetQueue(this);
+    CppQueue_ResetQueue(this);
 
     return this;
 }
@@ -367,4 +339,37 @@ struct c_data_queue *CDataQueue_CDataQueue(struct c_data_queue *this,
 
     return this;
 }
-EXPORT_SYMBOL_GPL(CDataQueue_CDataQueue);
+
+void CQueue_ResetQueue(struct c_queue *param_1)
+{
+    if (!param_1)
+        return;
+
+    param_1->m_Queue.pTail = NULL;
+    param_1->m_Queue.pHead = NULL;
+    param_1->m_dwNbInQueue = 0;
+}
+
+void CppQueue_ResetQueue(struct cpp_queue *this)
+{
+    unsigned long flags = 0;
+
+    if (!this)
+        return;
+
+    if ((this->m_Object.m_dwObjectAttributes & 1) != 0) {
+        spin_lock_irqsave(&this->m_Object.m_spinlock, flags);
+    } else if ((this->m_Object.m_dwObjectAttributes & 2) != 0) {
+        mutex_lock(&this->m_Object.m_mutex);
+    }
+
+    this->m_Queue.pTail = NULL;
+    this->m_Queue.pHead = NULL;
+    this->m_dwNbInQueue = 0;
+
+    if ((this->m_Object.m_dwObjectAttributes & 1) != 0) {
+        spin_unlock_irqrestore(&this->m_Object.m_spinlock, flags);
+    } else if ((this->m_Object.m_dwObjectAttributes & 2) != 0) {
+        mutex_unlock(&this->m_Object.m_mutex);
+    }
+}

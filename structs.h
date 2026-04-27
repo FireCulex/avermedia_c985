@@ -19,7 +19,16 @@
 #include "include/abi/impegcodec.h"
 #include "include/abi/cyuvoutpin.h"
 #include "include/abi/cpcmoutpin.h"
+#include "include/abi/cobject.h"
+#include "include/abi/cobjectmgr.h"
+#include "include/abi/ksfilter.h"
+#include "include/abi/ccapturefilter.h"
+#include "include/abi/cencoderfilter.h"
+#include "include/abi/_teventblock.h"
 #include "include/abi/cqueue.h"
+#include "include/abi/cppqueue.h"
+
+
 /* ============================================
  * ARM Buffer Variants (56 bytes each)
  * ============================================ */
@@ -137,12 +146,6 @@ struct task_arm_request {
 } __packed;
 
 /* ============================================
- * CObject Base Class (moved to include/abi/cobject.h)
- * ============================================ */
-#include "include/abi/cobject.h"
-#include "include/abi/cobjectmgr.h"
-
-/* ============================================
  * CFifo (0x54 = 84 bytes + spinlock)
  * ============================================ */
 struct c_fifo {
@@ -214,17 +217,6 @@ struct c_channel {
     s64 m_llBasePts;                        /* 0x1178 */
     s64 m_llPrevPts;                        /* 0x1180 */
     s64 m_llAddPts;                         /* 0x1188 */
-};
-
-/* ============================================
- * TEventBlock (0x318 bytes)
- * ============================================ */
-struct t_event_block {
-    int check;                              /* 0x00 */
-    int bits;                               /* 0x04 */
-    void *mutexID;                          /* 0x08 */
-    struct completion events[32];           /* 0x10 */
-    u64 spinlock;                           /* 0x310 */
 };
 
 /* ============================================
@@ -927,9 +919,6 @@ struct c985_buffer {
  * ============================================ */
 struct c985_poc {
 
-    struct cyuv_out_pin yuv_pin;    /* YUV input pin */
-    struct cpcm_out_pin comp_pin;   /* Compressed output pin */
-
     u32 active_task_id;  /* Currently active encoder task (0-7, or -1 if none) */
 
     /* Project structure - C985-specific logic */
@@ -1046,6 +1035,15 @@ struct c985_poc {
     wait_queue_head_t evt_sync_dma;
     u32 evt_sync_dma_flags;
     struct mutex mailbox_lock;
+
+    struct _KSFILTER         capture_ksfilter;
+    struct _KSFILTER         encoder_ksfilter;
+    struct CCaptureFilter    capture_filter;
+    struct CEncoderFilter    encoder_filter;
+    struct _KSPIN            yuv_ks_pin;
+    struct _KSPIN            comp_ks_pin;
+    struct cyuv_out_pin      yuv_pin;
+    struct cpcm_out_pin      comp_pin;
 };
 
 /* ============================================

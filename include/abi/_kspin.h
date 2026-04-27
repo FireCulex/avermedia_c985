@@ -93,6 +93,14 @@ struct _KSPIN {
     KSSTATE DeviceState;                        /* 0x78 */
     KSRESET ResetState;                         /* 0x7C */
     KSSTATE ClientState;                        /* 0x80 */
+    /* --- end of Windows ABI fields (0x84) --- */
+
+    /* Linux-only: parent filter backlink
+     * In Windows, KsPinGetParentFilter() walks KS object headers.
+     * We model that explicitly here. */
+    u32 _pad84;                                 /* 0x84 - alignment */
+    struct _KSFILTER *_parent;                  /* 0x88 - Linux parent link */
+
 };                                              /* total: 0x84 */
 
 typedef struct _KSPIN KSPIN;

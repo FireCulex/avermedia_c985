@@ -3,8 +3,8 @@
 
 #include <linux/types.h>
 #include "_kspin.h"
+#include "cdevice.h"
 
-struct c_device;
 struct IKsReferenceClock;
 
 struct c_base_pin {
@@ -30,7 +30,7 @@ struct c_base_pin {
     int m_bBufferFrameAligned;            /* 0xD4 */
     int m_bDisabled;                      /* 0xD8 */
     u32 _paddc;                           /* 0xDC */
-    struct c_device *m_pDevice;           /* 0xE0 */
+    struct CDevice *m_pDevice;           /* 0xE0 */
     u32 m_dwFrameWidth;                   /* 0xE8 */
     u32 m_dwFrameHeight;                  /* 0xEC */
 };                                        /* total: 0xF0 */

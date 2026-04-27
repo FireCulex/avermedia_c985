@@ -28,6 +28,13 @@
 #include "include/abi/cdatapin.h"
 #include "include/abi/cpcmoutpin.h"
 #include "include/abi/cyuvoutpin.h"
+#include <linux/delay.h>
+
+#define SYNC_PRINT(fmt, ...) do { \
+printk(KERN_EMERG "C985_HALT: " fmt "\n", ##__VA_ARGS__); \
+mdelay(1000); \
+} while (0)
+
 
 
 void CBasePin_fillFrameInfo(struct c_base_pin *this,
@@ -140,7 +147,7 @@ void vector_constructor_iterator(void *base, size_t elem_size, size_t count,
  * ============================================ */
 void *CBasePin_CBasePin(struct c_base_pin *this,
                         struct _KSPIN *param_1,
-                        struct c_device *param_2,
+                        struct CDevice *param_2,
                         u32 param_3,
                         u32 param_4,
                         u32 param_5)
@@ -234,7 +241,7 @@ long CBasePin_InitPin(struct c_base_pin *this,
  * ============================================ */
 void *CDataPin_CDataPin(struct c_data_pin *this,
                         struct _KSPIN *param_1,
-                        struct c_device *param_2,
+                        struct CDevice *param_2,
                         u32 param_3,
                         u32 param_4,
                         u32 param_5)
@@ -292,7 +299,7 @@ void *CDataPin_CDataPin(struct c_data_pin *this,
  * ============================================ */
 void *CPCMOutPin_CPCMOutPin(struct cpcm_out_pin *this,
                             struct _KSPIN *param_1,
-                            struct c_device *param_2,
+                            struct CDevice *param_2,
                             u32 param_3,
                             u32 param_4,
                             int param_5,
@@ -506,7 +513,7 @@ long CBasePin_SetFrameSize(struct c_base_pin *this, u32 width, u32 height)
  * ============================================ */
 void *CYUVOutPin_CYUVOutPin(struct cyuv_out_pin *this,
                             struct _KSPIN *param_1,
-                            struct c_device *param_2,
+                            struct CDevice *param_2,
                             u32 param_3,
                             u32 param_4,
                             u32 param_5,
@@ -646,24 +653,21 @@ void *CYUVOutPin_CYUVOutPin(struct cyuv_out_pin *this,
     return this;
 }
 
-/* ============================================
- * CDataPin::Create
- * Matches: CDataPin::Create
- *
- * /* ============================================
+
+ /* /* ============================================
  * CBasePin::Create
  * Matches: CBasePin::Create
  * ============================================ */
  long CBasePin_Create(struct c_base_pin *this)
  {
-     pr_debug("%s: CBasePin::Create Enter\n", __func__);
+     this->m_bDisabled = 0;
 
-     /* Get task handle from parent filter */
-     CBasePin_GetTaskHandle(this);
+     /* In the decompilation, this->_padding_ is the CDevice pointer
+      *      because CBasePin was constructed with CDevice* as param_2 */
+     CDevice_AddPin((struct CDevice *)this->m_pDevice, this);
 
      return 0;
  }
-
  /* ============================================
   * GUIDs from GetTaskHandle decompilation
   * ============================================ */
@@ -747,7 +751,7 @@ void *CYUVOutPin_CYUVOutPin(struct cyuv_out_pin *this,
 
          guid_match = IsEqualTQPGUID(desc->PinDescriptor.Name, _GUID_6da2460e_3021_425f_9dc5_7311a8aeb761);
          if (guid_match) {
-             task_handle = CEncoderFilter_GetEncodeTaskHandle(parent_filter);
+             task_handle = CEncoderFilter_GetEncodeTaskHandle(filter_obj);
              this->m_hTask = task_handle;
              pr_debug("CBasePin::GetTaskHandle: MPEG out pin, hTask=%d\n", task_handle);
              return;
@@ -755,7 +759,7 @@ void *CYUVOutPin_CYUVOutPin(struct cyuv_out_pin *this,
 
          guid_match = IsEqualTQPGUID(desc->PinDescriptor.Name, _GUID_f01ab56e_d77b_43cd_8d6c_6817e06a651f);
          if (guid_match) {
-             task_handle = CEncoderFilter_GetEncodeTaskHandle(parent_filter);
+             task_handle = CEncoderFilter_GetEncodeTaskHandle(filter_obj);
              this->m_hTask = task_handle;
              pr_debug("CBasePin::GetTaskHandle: MPEG out pin (alt), hTask=%d\n", task_handle);
              return;
@@ -763,7 +767,7 @@ void *CYUVOutPin_CYUVOutPin(struct cyuv_out_pin *this,
 
          guid_match = IsEqualTQPGUID(desc->PinDescriptor.Name, _GUID_fb6c4281_0353_11d1_905f_0000c0cc16ba);
          if (guid_match) {
-             task_handle = CEncoderFilter_GetEncodeTaskHandle(parent_filter);
+             task_handle = CEncoderFilter_GetEncodeTaskHandle(filter_obj);
              this->m_hTask = task_handle;
              pr_debug("CBasePin::GetTaskHandle: YUV input pin, hTask=%d\n", task_handle);
              return;
@@ -771,14 +775,14 @@ void *CYUVOutPin_CYUVOutPin(struct cyuv_out_pin *this,
 
          guid_match = IsEqualTQPGUID(desc->PinDescriptor.Name, _GUID_d29be036_e7e2_4bee_b7ff_6d02b32fcc69);
          if (guid_match) {
-             task_handle = CCaptureFilter_GetRawAudioTaskHandle(parent_filter);
+             task_handle = CCaptureFilter_GetRawAudioTaskHandle(filter_obj);
              this->m_hTask = task_handle;
              pr_debug("CBasePin::GetTaskHandle: PCM pin, hTask=%d\n", task_handle);
              return;
          }
 
          /* Default: Raw Video */
-         task_handle = CCaptureFilter_GetRawVideoTaskHandle(parent_filter);
+         task_handle = CCaptureFilter_GetRawVideoTaskHandle(filter_obj);
          this->m_hTask = task_handle;
          pr_debug("CBasePin::GetTaskHandle: YUV pin (default), hTask=%d\n", task_handle);
 
@@ -787,7 +791,7 @@ void *CYUVOutPin_CYUVOutPin(struct cyuv_out_pin *this,
 
          guid_match = IsEqualTQPGUID(desc->PinDescriptor.Name, _GUID_6da2460e_3021_425f_9dc5_7311a8aeb761);
          if (guid_match) {
-             task_handle = CEncoderFilter_GetEncodeTaskHandle(parent_filter);
+             task_handle = CEncoderFilter_GetEncodeTaskHandle(filter_obj);
              this->m_hTask = task_handle;
              pr_debug("CBasePin::GetTaskHandle: MPEG out pin (type 0x103fc), hTask=%d\n", task_handle);
          }
@@ -837,17 +841,23 @@ void CppQueue_AddEntry(void *queue, struct QUEUE_ENTRY_CPP *entry)
      unsigned long i;
      typedef long (*codec_fn)(struct IMpegCodec *, ulong);
 
+     SYNC_PRINT("CDP1 CDataPin_Create ENTER this=%px", this);
+
      pr_debug("%s: CDataPin::Create Enter\n", __func__);
 
      /* Call CBasePin::GetTaskHandle (vtable offset 0x58) */
      CBasePin_GetTaskHandle((struct c_base_pin *)this);
+     SYNC_PRINT("CDP2 GetTaskHandle done");
 
      /* Create m_pFreeQueue */
      pFreeQueue = kzalloc(0x90, GFP_KERNEL);
+     SYNC_PRINT("CDP3 pFreeQueue kzalloc=%px", pFreeQueue);
+
      if (pFreeQueue) {
-        pFreeQueue = CDataQueue_CDataQueue(pFreeQueue, (struct CppObject *)this, 0x10406, 1, NULL);
+         pFreeQueue = CDataQueue_CDataQueue(pFreeQueue, (struct CppObject *)this, 0x10406, 1, NULL);
      }
      this->m_pFreeQueue = pFreeQueue;
+     SYNC_PRINT("CDP4 m_pFreeQueue=%px", this->m_pFreeQueue);
 
      if (!this->m_pFreeQueue) {
          pr_err("%s: Unable to create CDataQueue (m_pFreeQueue)!\n", __func__);
@@ -856,10 +866,13 @@ void CppQueue_AddEntry(void *queue, struct QUEUE_ENTRY_CPP *entry)
 
      /* Create m_pDataRequestQueue */
      pDataRequestQueue = kzalloc(0x90, GFP_KERNEL);
+     SYNC_PRINT("CDP5 pDataRequestQueue kzalloc=%px", pDataRequestQueue);
+
      if (pDataRequestQueue) {
-        pDataRequestQueue = CDataQueue_CDataQueue(pDataRequestQueue, (struct CppObject *)this, 0x10406, 1, NULL);
+         pDataRequestQueue = CDataQueue_CDataQueue(pDataRequestQueue, (struct CppObject *)this, 0x10406, 1, NULL);
      }
      this->m_pDataRequestQueue = pDataRequestQueue;
+     SYNC_PRINT("CDP6 m_pDataRequestQueue=%px", this->m_pDataRequestQueue);
 
      if (!this->m_pDataRequestQueue) {
          pr_err("%s: Unable to create CDataQueue (m_pDataRequestQueue)!\n", __func__);
@@ -867,6 +880,8 @@ void CppQueue_AddEntry(void *queue, struct QUEUE_ENTRY_CPP *entry)
          this->m_pFreeQueue = NULL;
          return -ENOMEM;
      }
+
+     SYNC_PRINT("CDP7 about to init 256 entries");
 
      /* Initialize 256 stream SRBs and entries */
      for (i = 0; i < 0x100; i++) {
@@ -884,10 +899,16 @@ void CppQueue_AddEntry(void *queue, struct QUEUE_ENTRY_CPP *entry)
 
          /* Vtable call at offset 0x18: CppQueue<>::AddEntry */
          CppQueue_AddEntry(this->m_pFreeQueue, &this->m_Entries[i]);
+
+         if (i == 0 || i == 255)
+             SYNC_PRINT("CDP8 entry[%lu] done", i);
      }
+
+     SYNC_PRINT("CDP9 all 256 entries done");
 
      /* First run codec handling */
      if (this->m_pDevice && this->m_pDevice->m_FirstRun) {
+         SYNC_PRINT("CDP10 first run codec path");
          codec = (struct IMpegCodec *)this->m_pDevice->m_pMpegCodec;
 
          if (codec) {
@@ -903,6 +924,8 @@ void CppQueue_AddEntry(void *queue, struct QUEUE_ENTRY_CPP *entry)
              }
          }
      }
+
+     SYNC_PRINT("CDP11 CDataPin_Create COMPLETE");
 
      pr_debug("%s: CDataPin::Create Complete\n", __func__);
 
@@ -1163,7 +1186,7 @@ void CBasePin_timeStamp(struct c_base_pin *this,
 
  void CDataPin_submitBuffer(struct c_data_pin *this)
  {
-     struct pin_data_req *pPVar1;
+     struct PIN_DATA_REQ *pPVar1;
      int iVar2;
      struct _KSSTREAM_POINTER *p_Var3;
      struct IMpegCodec *pIVar4;
@@ -1449,13 +1472,13 @@ void CBasePin_timeStamp(struct c_base_pin *this,
                              struct _KSSTREAM_POINTER *stream_ptr,
                              enum AVerImageType image_type)
  {
-     struct CObject *cpp_obj;
+     struct CppObject *cpp_obj;
      struct CEncoderFilter *enc_filter;
      struct CCaptureFilter *cap_filter;
      u8 *src_ptr;
      u32 frame_size;
      u32 frame_extent;
-     enum qp_process_type process_name;
+     enum QP_PROCESS_TYPE process_name;
      int guid_match;
      u32 width, height;
      u64 copy_count;
@@ -1468,7 +1491,7 @@ void CBasePin_timeStamp(struct c_base_pin *this,
 
      /* Get parent filter from KS pin */
      void *parent_filter = KsPinGetParentFilter(this->base.m_p_ks_pin);
-     cpp_obj = *(struct CObject **)((char *)parent_filter + 0x10);
+     cpp_obj = *(struct CppObject **)((char *)parent_filter + 0x10);
 
      u32 filter_type = CppObject_WhoAmI(cpp_obj);
 
@@ -1772,6 +1795,17 @@ void CBasePin_timeStamp(struct c_base_pin *this,
 
      return result;
  }
+
+ /* Matches CDevice::AddPin */
+ void CDevice_AddPin(struct CDevice *this, struct c_base_pin *pin)
+ {
+     if (!this || !this->m_pPinsMgr || !pin)
+         return;
+
+     /* Calls CppObjectMgr<CBasePin>::AddObject */
+     CppObjectMgr_AddObject((struct CObjectMgr *)this->m_pPinsMgr, pin);
+ }
+
 
  MODULE_DESCRIPTION("AVerMedia C985 PCM Output Pin Driver");
  MODULE_LICENSE("GPL v2");

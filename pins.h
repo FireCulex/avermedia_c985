@@ -2,7 +2,7 @@
 /* pin.h — PCM Output Pin for AVerMedia C985 */
 #ifndef PINS_H
 #define PINS_H
-#include "cdevice.h"
+
 
 #include <linux/types.h>
 typedef unsigned long  ulong;
@@ -181,7 +181,7 @@ extern const u64 CDataQueue_vftable[];
  * ============================================ */
 void *CPCMOutPin_CPCMOutPin(struct cpcm_out_pin *this,
                             struct _KSPIN *param_1,
-                            struct c_device *param_2,
+                            struct CDevice *param_2,
                             u32 param_3,
                             u32 param_4,
                             int param_5,
@@ -190,7 +190,7 @@ void *CPCMOutPin_CPCMOutPin(struct cpcm_out_pin *this,
 /* CDataPin constructor */
 void *CDataPin_CDataPin(struct c_data_pin *this,
                         struct _KSPIN *param_1,
-                        struct c_device *param_2,
+                        struct CDevice *param_2,
                         u32 param_3,
                         u32 param_4,
                         u32 param_5);
@@ -204,7 +204,7 @@ long CDataPin_Process(struct c_data_pin *this);
 /* CBasePin constructor */
 void *CBasePin_CBasePin(struct c_base_pin *this,
                         struct _KSPIN *param_1,
-                        struct c_device *param_2,
+                        struct CDevice *param_2,
                         u32 param_3,
                         u32 param_4,
                         u32 param_5);
@@ -227,7 +227,7 @@ int IsEqualTQPGUID(const void *guid1, const void *guid2);
 /* CYUVOutPin constructor */
 void *CYUVOutPin_CYUVOutPin(struct cyuv_out_pin *this,
                             struct _KSPIN *param_1,
-                            struct c_device *param_2,
+                            struct CDevice *param_2,
                             u32 param_3,
                             u32 param_4,
                             u32 param_5,
@@ -288,6 +288,6 @@ void CDataPin_buildBufferDescriptor(struct c_data_pin *this,
 
 long CBasePin_Create(struct c_base_pin *this);
 u32 CBasePin_KsPtsToPts(struct c_base_pin *this, struct KSTIME *param_1);
-
+void CDevice_AddPin(struct CDevice *this, struct c_base_pin *pin);
 #endif /* PINS_H */
 

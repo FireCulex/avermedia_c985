@@ -10,6 +10,7 @@
 #include <linux/export.h>
 #include "sync.h"
 #include "include/abi/_kspin.h"
+#include "include/abi/ksfilter.h"
 #include "pins.h"
 
 /* ---- Spinlock / Mutex stubs ---- */
@@ -62,7 +63,6 @@ struct _KSSTREAM_POINTER *KsPinGetLeadingEdgeStreamPointer(void *pin, u32 state)
 
     return (struct _KSSTREAM_POINTER *)pin;
 }
-EXPORT_SYMBOL_GPL(KsPinGetLeadingEdgeStreamPointer);
 
 int KsStreamPointerClone(struct _KSSTREAM_POINTER *original,
                          void (*cancel_callback)(struct _KSSTREAM_POINTER *),
@@ -134,16 +134,13 @@ EXPORT_SYMBOL_GPL(KsStreamPointerAdvance);
 
 void *KsPinGetParentFilter(struct _KSPIN *ks_pin)
 {
-    if (!ks_pin || !ks_pin->Context)
+    if (!ks_pin)
         return NULL;
 
-    /*
-     * In our v4l2 model, the Context is the c985_poc device.
-     * The "parent filter" is equivalent to the device structure.
-     */
-    pr_debug("%s: ks_pin=%p, parent=%p\n", __func__, ks_pin, ks_pin->Context);
-    return ks_pin->Context;
+    pr_debug("%s: ks_pin=%p, parent=%p\n", __func__, ks_pin, ks_pin->_parent);
+    return ks_pin->_parent;
 }
+
 
 /* ============================================
  * KsPinAttemptProcessing
@@ -207,7 +204,7 @@ struct _KSSTREAM_POINTER *KsPinGetFirstCloneStreamPointer(struct _KSPIN *ks_pin)
 
     /* Return the stream pointer from the buffer's SRB */
     if (buf->queue_entry && buf->queue_entry->Data) {
-        struct pin_data_req *srb = buf->queue_entry->Data;
+        struct PIN_DATA_REQ *srb = buf->queue_entry->Data;
         pr_debug("%s: ks_pin=%p, stream_ptr=%p (buf=%p)\n",
                  __func__, ks_pin, srb->pSrb, buf);
         return srb->pSrb;

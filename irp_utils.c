@@ -5,17 +5,17 @@
 
 #include "avermedia_c985.h"
 
-struct c_device *getDevice(struct _IRP *irp)
+struct CDevice *getDevice(struct _IRP *irp)
 {
     struct _KSPIN *ks_pin;
     struct _KSDEVICE *ks_dev;
-    struct c_device *device = NULL;
+    struct CDevice *device = NULL;
 
     ks_pin = (struct _KSPIN *)KsGetFilterFromIrp(irp);
     if (ks_pin != NULL) {
         ks_dev = KsPinGetDevice(ks_pin);
         if (ks_dev != NULL) {
-            device = (struct c_device *)ks_dev->Context;
+            device = (struct CDevice *)ks_dev->Context;
         }
     }
 
@@ -27,7 +27,7 @@ ulong getTaskHandle(struct _IRP *irp, enum _QP_TASK_HANDLE task_type)
 {
     struct CObject *filter_obj;
     u32 filter_type;
-    struct c_device *device;
+    struct CDevice *device;
     struct c_task_encode *encode_task;
     struct c_task_raw_video *vid_task;
     struct c_task_raw_audio *aud_task;
